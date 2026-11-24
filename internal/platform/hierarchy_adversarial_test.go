@@ -227,7 +227,8 @@ func TestHierarchyAuthorizationAndRevokedCuration(t *testing.T) {
 	}
 	id := NewID()
 	ctx := context.Background()
-	if err := Provision(ctx, admin, ProvisionInput{Tenant: "demo", Domain: "wadjet", ID: id, Owner: id, Role: "worker", Token: id, Expires: time.Now().Add(time.Hour), Curator: true}); err != nil {
+	provision := ProvisionInput{Tenant: "demo", Domain: "wadjet", ID: id, Owner: id, Role: "worker", Token: id, Expires: time.Now().Add(time.Hour), Curator: true}
+	if err := Provision(ctx, admin, provision); err != nil {
 		t.Fatal(err)
 	}
 	key := NewID()
@@ -240,6 +241,14 @@ func TestHierarchyAuthorizationAndRevokedCuration(t *testing.T) {
 	_ = json.Unmarshal(raw, &record)
 	if err = SetCuration(ctx, admin, "demo", "wadjet", id, false); err != nil {
 		t.Fatal(err)
+	}
+	if err = Provision(ctx, admin, provision); err != nil {
+		t.Fatal("exact provisioning retry failed", err)
+	}
+	altered := provision
+	altered.Token = NewID()
+	if err = Provision(ctx, admin, altered); err == nil {
+		t.Fatal("provisioning retry replaced credentials")
 	}
 	if _, err = s.Execute(ctx, id, "node.create", key, body); err == nil {
 		t.Fatal("revoked response replayed")

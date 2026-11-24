@@ -22,7 +22,7 @@ The walking-scenario integration test follows A publishing, B retrieving/applyin
 
 ## Validation boundary
 
-The hierarchy release includes 36 Go integration/adversarial test functions plus their subcases and the two experiment-analysis tests. It retains the original live-pilot tests and adds migration, context-matrix, curation, metadata-history and Wadjet-bootstrap gates. Run `bash scripts/test-integration.sh` for the real PostgreSQL/race-enabled suite. This is test evidence for platform behavior, not agent productivity improvement.
+The hierarchy release includes 36 Go integration/adversarial test functions plus their subcases, two experiment-analysis tests and one private-credential persistence regression. It retains the original live-pilot tests and adds migration, context-matrix, curation, metadata-history and Wadjet-bootstrap gates. Run `bash scripts/test-integration.sh` for the real PostgreSQL/race-enabled suite. This is test evidence for platform behavior, not agent productivity improvement.
 
 The real PostgreSQL suite uses a non-owner runtime role and Go's race detector. It tests concurrent cycle insertion, retry conflicts, tenant isolation, pooled-connection identity clearing, malformed/unknown input, scope mismatch, no-trigger results, unknown provenance, infrastructure failure, copied/derived reports, stale completion, empty findings, interrupted work outcomes, history, revocation, and restore/purge behavior. REST/MCP tests exercise protocol initialization/discovery and shared state/authorization. The experiment-analysis tests ensure failures consume cost and unscored completion is not treated as correctness.
 

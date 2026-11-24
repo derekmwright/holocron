@@ -94,6 +94,8 @@ Upgrade procedure:
 
 There is no destructive down-migration. Rollback means restoring the pre-upgrade database and binary in a controlled window; preserve any post-upgrade records for reconciliation. Restore tests include new metadata tables and deletion-ledger replay. Whole-domain purge covers the new associations and history.
 
+The local upgrade exposed a Python credential-file write error after provisioning the new curator. It was corrected with atomic mode-0600 writes, a private pending-provision journal, and retry-safe identity creation. A provisioning retry cannot replace credentials or re-enable a revoked curation grant. Recovery of the unused local curator credential was audited; no knowledge records were changed by that recovery.
+
 An unchanged authorized retry still returns its original bytes. After an authorization-version change, the server returns a conflict instead of old payload bytes; the original mutation remains committed once. Do not blindly submit that mutation with a new key. Reconcile its known ID with current read operations. This release conservatively fences all cached responses in that visibility domain after an authority change; selective grants and multi-domain replay are deferred.
 
 Credential expiry now prevents new authentication without retracting historically valid observations/reviews. Administrative `revoke` remains an explicit principal quarantine affecting support. `set-curation` changes metadata authority only and bumps the authorization version. It does not invalidate facts or erase previously authorized classification work.
@@ -108,7 +110,7 @@ For Codex unattended use, [the worker profile](../examples/codex-worker.toml) li
 
 ## Validation and explicit limitations
 
-Validation completed with 36 Go test functions and their adversarial subcases against PostgreSQL 17 under `-race`, plus two experiment-analysis tests. Build and `go vet ./...` passed. Focused counterexample regressions were rerun after the final case-set isolation check. Documentation links, agent TOML, Python syntax and source credential-pattern checks also passed.
+Validation completed with 36 Go test functions and their adversarial subcases against PostgreSQL 17 under `-race`, plus two experiment-analysis tests and a private-credential persistence regression. Build and `go vet ./...` passed. Focused regressions were rerun after the final scope-isolation and provisioning-retry changes. Documentation links, agent TOML, Python syntax and source credential-pattern checks also passed.
 
 The release acceptance suite covers:
 

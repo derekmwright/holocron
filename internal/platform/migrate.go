@@ -137,9 +137,20 @@ func Provision(ctx context.Context, url string, v ProvisionInput) error {
 	if _, err = tx.Exec(ctx, `SELECT epoch FROM holocron.domains WHERE tenant=$1 AND id=$2 FOR UPDATE`, v.Tenant, v.Domain); err != nil {
 		return err
 	}
-	_, err = tx.Exec(ctx, `INSERT INTO holocron.principals(tenant,domain,id,owner,role,token_hash,expires_at) VALUES($1,$2,$3,$4,$5,$6,$7)`, v.Tenant, v.Domain, v.ID, v.Owner, v.Role, Digest(v.Token), v.Expires)
+	tag, err := tx.Exec(ctx, `INSERT INTO holocron.principals(tenant,domain,id,owner,role,token_hash,expires_at) VALUES($1,$2,$3,$4,$5,$6,$7) ON CONFLICT(tenant,domain,id) DO NOTHING`, v.Tenant, v.Domain, v.ID, v.Owner, v.Role, Digest(v.Token), v.Expires)
 	if err != nil {
 		return err
+	}
+	if tag.RowsAffected() == 0 {
+		var same bool
+		if err = tx.QueryRow(ctx, `SELECT owner=$4 AND role=$5 AND token_hash=$6 AND expires_at=$7 FROM holocron.principals WHERE tenant=$1 AND domain=$2 AND id=$3`, v.Tenant, v.Domain, v.ID, v.Owner, v.Role, Digest(v.Token), v.Expires).Scan(&same); err != nil {
+			return err
+		}
+		if !same {
+			return fmt.Errorf("principal already exists with different provisioning parameters")
+		}
+		// An exact retry never re-enables a revoked identity or curation grant.
+		return tx.Commit(ctx)
 	}
 	if v.Curator {
 		if _, err = tx.Exec(ctx, `INSERT INTO holocron.curation_grants(tenant,domain,principal) VALUES($1,$2,$3)`, v.Tenant, v.Domain, v.ID); err != nil {

@@ -11,6 +11,7 @@ import secrets
 import signal
 import subprocess
 import sys
+import tempfile
 import time
 import urllib.request
 
@@ -24,6 +25,19 @@ APP = f"postgresql://holocron_app@/postgres?host={STATE / 'socket'}&sslmode=disa
 
 def run(args, **kwargs):
     return subprocess.run(args, check=True, **kwargs)
+
+
+def save_private_json(path, value):
+    fd, temporary = tempfile.mkstemp(prefix=path.name + ".", dir=path.parent)
+    try:
+        with os.fdopen(fd, "w") as output:
+            output.write(json.dumps(value, indent=2) + "\n")
+            output.flush()
+            os.fsync(output.fileno())
+        os.replace(temporary, path)
+    finally:
+        if os.path.exists(temporary):
+            os.unlink(temporary)
 
 
 def status():
@@ -58,14 +72,16 @@ def start():
         for name, role in [("publisher", "worker"), ("consumer", "worker"), ("challenger", "worker"), ("validator", "validator"), ("reviewer", "reviewer"), ("curator", "worker"), ("outsider", "worker")]:
             if name in actors:
                 continue
-            token = secrets.token_urlsafe(32)
-            record = {"Tenant": "local-pilot" if name != "outsider" else "isolated-pilot", "Domain": "live-agents", "ID": name, "Owner": "local-human-operator", "Role": role, "Token": token, "Expires": (datetime.datetime.now(datetime.timezone.utc) + datetime.timedelta(days=7)).isoformat(), "Curator": name == "curator"}
+            pending = STATE / ("provision-" + name + ".json")
+            if pending.exists():
+                record = json.loads(pending.read_text())
+            else:
+                record = {"Tenant": "local-pilot" if name != "outsider" else "isolated-pilot", "Domain": "live-agents", "ID": name, "Owner": "local-human-operator", "Role": role, "Token": secrets.token_urlsafe(32), "Expires": (datetime.datetime.now(datetime.timezone.utc) + datetime.timedelta(days=7)).isoformat(), "Curator": name == "curator"}
+                save_private_json(pending, record)
             run([str(BIN), "provision"], env=admin_env, input=json.dumps(record), text=True, stdout=log, stderr=log)
-            actors[name] = {"token": token, "role": role, "curator": name == "curator", "expires": record["Expires"]}
-            temporary = credentials.with_suffix(".tmp")
-            with temporary.open("w", opener=lambda path, flags: os.open(path, flags, 0o600)) as output:
-                output.write(json.dumps(actors, indent=2) + "\n")
-            temporary.replace(credentials)
+            actors[name] = {"token": record["Token"], "role": role, "curator": name == "curator", "expires": record["Expires"]}
+            save_private_json(credentials, actors)
+            pending.unlink()
     server_env = dict(env, HOLOCRON_DATABASE_URL=APP, HOLOCRON_LISTEN="127.0.0.1:8080")
     server_env.pop("HOLOCRON_ADMIN_DATABASE_URL", None)
     with (STATE / "server.log").open("a") as log:
