@@ -14,9 +14,31 @@ go vet ./...
 
 The first command runs unit/compile checks and explicitly skips database tests unless `HOLOCRON_TEST_DATABASE_URL` is set. The integration script starts a disposable PostgreSQL cluster in a private temporary directory, migrates it, provisions test identities, and runs the real PostgreSQL/HTTP/MCP tests with Go's race detector. It requires permission to create local sockets. Set `PG_BIN` if PostgreSQL binaries are elsewhere. The test credentials in that script must never be used for a deployed service.
 
-The schema migration requires an administrative connection able to create a schema and the `holocron_app` role. The runtime refuses superuser, BYPASSRLS, and schema-table-owner connections. Migration checksums prevent silently reusing a differently shaped schema. This is the initial migration; future changes require explicit upgrade migrations.
+Schema migration requires an administrative connection able to create the schema and `holocron_app` role. The runtime refuses superuser, BYPASSRLS and table-owner/member connections. Numbered, checksum-verified migration 2 adds the hierarchy without editing migration 1. The current runtime requires schema version 2. Follow the [upgrade procedure](hierarchy-release.md#migration-and-compatibility) before replacing an existing runtime.
 
 ## Local service
+
+For a persistent local development instance with a private Unix-socket PostgreSQL cluster, separate agent credentials, and a loopback server:
+
+```sh
+python3 scripts/local-dev.py start
+python3 scripts/local-dev.py status
+# When you want to stop it:
+python3 scripts/local-dev.py stop
+```
+
+This keeps state under ignored `artifacts/local/` (directory mode 0700), with credentials in a mode-0600 file. It runs after the startup command exits; it is not an OS boot service. The local helper requires a Git checkout and embeds VCS provenance. Credentials expire after seven days. Existing state is retained across restarts; do not delete it to hide failed experiments.
+
+To run one fresh, bounded real client session:
+
+```sh
+python3 scripts/live-agent.py codex publisher /path/to/prompt.txt
+python3 scripts/live-agent.py claude validator /path/to/prompt.txt
+```
+
+The runner uses existing client authentication and configured models, a five-minute timeout, and a $3 reported-API-cost ceiling for each Claude run. Codex does not expose a comparable cost ceiling here. Logs and raw usage remain in ignored per-run directories. Codex receives an explicit role-specific Holocron tool allowlist and approval policy; no user-wide configuration is changed. Tool names contain dots, so CLI approval overrides use a literal-key TOML table rather than splitting the tool name as a configuration path. The probe uses a worker test subject separately from the submitting observer and checks `session.describe` against the pinned source/build scope.
+
+These are opt-in live model invocations and consume the connected account's usage. A successful process exit alone is not a successful investigation; inspect tool outcomes and server assessments. See the pilot report for actual outcomes.
 
 Create a dedicated PostgreSQL database and configure its authentication outside Holocron. Supply connection strings through environment variables, not command-line flags or tracked files:
 
@@ -29,7 +51,7 @@ export HOLOCRON_DATABASE_URL='postgresql://holocron_app@localhost/holocron'
 go run ./cmd/holocron serve
 ```
 
-Provisioning accepts `Tenant`, `Domain`, `ID`, `Owner`, `Role`, `Token`, and RFC3339 `Expires`. Roles are worker, validator, reviewer, and admin. Generate high-entropy random tokens and give each participant its own expiring credential. Only SHA-256 credential digests are stored. Provisioning and revocation are administrative CLI operations, unavailable to workers through MCP or REST. To rotate a credential in this prototype, provision a new principal/run identity and revoke the old one; revocation conservatively removes its evidence from eligible support.
+Provisioning accepts `Tenant`, `Domain`, `ID`, `Owner`, `Role`, `Token`, RFC3339 `Expires`, and optional `Curator`. Roles are worker, validator, reviewer and admin. Curation is a separate explicit capability, not a reviewer privilege. Generate high-entropy tokens and give each participant its own credential; only digests are stored. Administrative `set-curation` changes metadata authority and fences old cached responses. Credential expiry blocks authentication without erasing history. Deliberate `revoke` is a principal quarantine that removes its evidence/reviews from eligible support; do not use it as a harmless routine token-expiry operation.
 
 The default listener is `127.0.0.1:8080`; `HOLOCRON_LISTEN` overrides it. Use an authenticated TLS boundary before exposing it beyond a trusted local machine. The server itself does not configure TLS, organization SSO, rate limiting, or production secret distribution. Keep the administrative database credential out of the runtime environment.
 
@@ -39,7 +61,9 @@ Set `HOLOCRON_TELEMETRY_STDOUT=1` for OpenTelemetry traces and periodic metrics 
 
 Merge [the Codex example](../examples/codex.toml) into the intended profile, or use [the Claude Code MCP example](../examples/claude.mcp.json) as project MCP configuration. Export `HOLOCRON_TOKEN` in the client environment. Copy the participation instructions from [the example](../examples/agent-instructions.md) into the project's appropriate agent instructions. The examples are not installed into user configuration automatically.
 
-The MCP SDK transport integration test covers initialization, tools discovery, authenticated calls, state shared with REST, and role/tenant denial. Installed CLI versions observed during development: Codex 0.172.0 and Claude Code 2.1.330. Version discovery is not a live model workflow test. End-to-end model participation and interruption behavior must be measured with fresh sessions before claiming reliable adoption.
+The MCP SDK transport integration test covers initialization, tools discovery, authenticated calls, state shared with REST, and role/tenant denial. The [first live pilot](live-pilot.md) additionally exercised actual Codex 0.172.0 and Claude Code 2.1.330 sessions. Interruption, outage behavior, and wider workloads still need evaluation before claiming reliable adoption.
+
+For hierarchical work, follow [Wadjet onboarding](wadjet-bootstrap.md) and the [single-domain release guide](hierarchy-release.md). The dedicated `live-agent.py` helper remains an HTTP-guard smoke harness; its automatically constructed Holocron scope is not a Wadjet execution scope. Normal Wadjet agents should run in the Wadjet checkout with the shared MCP connection and returned working IDs.
 
 Do not depend on a Stop hook to capture all results. An externally run completion gate uses server receipts and outcome dispositions; interruption can leave an attempt without an outcome. A later owner report can classify it abandoned. The service cannot stop independently operated workers or prove they read the context.
 

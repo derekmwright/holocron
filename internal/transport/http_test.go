@@ -7,6 +7,8 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"os"
+	"os/exec"
+	"path/filepath"
 	"testing"
 	"time"
 
@@ -121,5 +123,103 @@ func TestHTTPRejectsCrossOriginAndOversizedInput(t *testing.T) {
 	status, _ := request(t, server.URL, "worker-a", "claim.publish", map[string]any{"statement": string(bytes.Repeat([]byte{'x'}, 300*1024))})
 	if status != 400 {
 		t.Fatal("oversized request accepted", status)
+	}
+}
+
+func TestHierarchyAndUnknownEnvelopeThroughMCP(t *testing.T) {
+	server := testServer(t)
+	ctx, cancel := context.WithTimeout(context.Background(), 20*time.Second)
+	defer cancel()
+	client := mcp.NewClient(&mcp.Implementation{Name: "hierarchy-acceptance", Version: "1"}, nil)
+	session, err := client.Connect(ctx, &mcp.StreamableClientTransport{Endpoint: server.URL + "/mcp", HTTPClient: &http.Client{Transport: bearer{"curator"}}}, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer session.Close()
+	call := func(name string, args any) map[string]any {
+		t.Helper()
+		result, err := session.CallTool(ctx, &mcp.CallToolParams{Name: name, Arguments: map[string]any{"key": platform.NewID(), "arguments": args}})
+		if err != nil || result.IsError {
+			t.Fatalf("%s: %#v %v", name, result, err)
+		}
+		return result.StructuredContent.(map[string]any)
+	}
+	concept := call("node.create", platform.NodeInput{Category: "concept", Kind: "engineering-discipline", Name: "Spill behavior"})["id"].(string)
+	// Omitted legacy scope is essential: missing dimensions must remain unknown,
+	// and the MCP schema must permit the explicit v2 envelope instead.
+	claim := call("claim.publish", map[string]any{"statement": "Spill mechanism may transfer", "kind": "hypothesis", "limitations": "Unvalidated transfer", "applicability": map[string]any{"version": 2, "state": "unknown", "description": "No broader applicability established"}})["id"].(string)
+	association := call("association.propose", platform.AssociationInput{Kind: "claim_concept", Claim: claim, Target: concept, Reason: "Explicit subject"})["id"].(string)
+	call("association.review", platform.AssociationReviewInput{ID: association, Verdict: "accepted", Reason: "Curated only"})
+	out := call("context.get", map[string]any{"orientation_only": true, "working": map[string]any{"concepts": []string{concept}}, "byte_budget": 16000})
+	found := false
+	for _, v := range out["cards"].([]any) {
+		c := v.(map[string]any)
+		if c["id"] == claim {
+			found = true
+			if c["local_applicability"].(map[string]any)["state"] != "unknown" {
+				t.Fatal("unknown became valid")
+			}
+		}
+	}
+	if !found {
+		t.Fatal("concept discovery failed")
+	}
+	status, read := request(t, server.URL, "worker-b", "claim.get", platform.IDInput{ID: claim})
+	if status != 200 || read["assessment"].(map[string]any)["posture"] != "unassessed" {
+		t.Fatal("classification affected epistemics", status, read)
+	}
+	status, _ = request(t, server.URL, "reviewer", "node.create", platform.NodeInput{Category: "concept", Kind: "topic", Name: "Not an authorized curator"})
+	if status != 403 {
+		t.Fatal("review role acquired curation", status)
+	}
+}
+
+func TestWadjetBootstrapIsMetadataOnlyAndRetrySafe(t *testing.T) {
+	server := testServer(t)
+	namespace := "test-" + platform.NewID()
+	script := filepath.Join("..", "..", "scripts", "bootstrap-wadjet.py")
+	run := func(token string) (map[string]any, error) {
+		t.Helper()
+		cmd := exec.Command("python3", script, "--apply", "--url", server.URL, "--namespace", namespace)
+		cmd.Env = append(os.Environ(), "HOLOCRON_TOKEN="+token)
+		raw, err := cmd.CombinedOutput()
+		if err != nil {
+			return nil, err
+		}
+		var out map[string]any
+		if err = json.Unmarshal(raw, &out); err != nil {
+			t.Fatalf("bootstrap JSON: %v %s", err, raw)
+		}
+		return out, nil
+	}
+	if _, err := run("worker-a"); err == nil {
+		t.Fatal("bootstrap accepted non-curator")
+	}
+	first, err := run("curator")
+	if err != nil {
+		t.Fatal(err)
+	}
+	second, err := run("curator")
+	if err != nil {
+		t.Fatal(err)
+	}
+	a, _ := json.Marshal(first["node_ids"])
+	b, _ := json.Marshal(second["node_ids"])
+	if !bytes.Equal(a, b) {
+		t.Fatal("bootstrap duplicated nodes")
+	}
+	status, resolved := request(t, server.URL, "worker-b", "context.resolve", map[string]any{"working": first["working"]})
+	if status != 200 || len(resolved["direct_concepts"].([]any)) < 2 {
+		t.Fatal("bootstrap context unresolved", status, resolved)
+	}
+	status, bundle := request(t, server.URL, "worker-b", "context.get", first["orientation_request"])
+	if status != 200 {
+		t.Fatal(status, bundle)
+	}
+	for _, value := range bundle["cards"].([]any) {
+		card := value.(map[string]any)
+		if card["local_applicability"].(map[string]any)["state"] != "unknown" {
+			t.Fatal("metadata bootstrap established applicability")
+		}
 	}
 }

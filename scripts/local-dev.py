@@ -54,15 +54,18 @@ def start():
         admin_env = dict(env, HOLOCRON_ADMIN_DATABASE_URL=ADMIN)
         run([str(BIN), "migrate"], env=admin_env, stdout=log, stderr=log)
         credentials = STATE / "credentials.json"
-        if not credentials.exists():
-            actors = {}
-            for name, role in [("publisher", "worker"), ("consumer", "worker"), ("challenger", "worker"), ("validator", "validator"), ("reviewer", "reviewer"), ("outsider", "worker")]:
-                token = secrets.token_urlsafe(32)
-                record = {"Tenant": "local-pilot" if name != "outsider" else "isolated-pilot", "Domain": "live-agents", "ID": name, "Owner": "local-human-operator", "Role": role, "Token": token, "Expires": (datetime.datetime.now(datetime.timezone.utc) + datetime.timedelta(days=7)).isoformat()}
-                run([str(BIN), "provision"], env=admin_env, input=json.dumps(record), text=True, stdout=log, stderr=log)
-                actors[name] = {"token": token, "role": role, "expires": record["Expires"]}
-            credentials.write_text(json.dumps(actors, indent=2) + "\n")
-            credentials.chmod(0o600)
+        actors = json.loads(credentials.read_text()) if credentials.exists() else {}
+        for name, role in [("publisher", "worker"), ("consumer", "worker"), ("challenger", "worker"), ("validator", "validator"), ("reviewer", "reviewer"), ("curator", "worker"), ("outsider", "worker")]:
+            if name in actors:
+                continue
+            token = secrets.token_urlsafe(32)
+            record = {"Tenant": "local-pilot" if name != "outsider" else "isolated-pilot", "Domain": "live-agents", "ID": name, "Owner": "local-human-operator", "Role": role, "Token": token, "Expires": (datetime.datetime.now(datetime.timezone.utc) + datetime.timedelta(days=7)).isoformat(), "Curator": name == "curator"}
+            run([str(BIN), "provision"], env=admin_env, input=json.dumps(record), text=True, stdout=log, stderr=log)
+            actors[name] = {"token": token, "role": role, "curator": name == "curator", "expires": record["Expires"]}
+            temporary = credentials.with_suffix(".tmp")
+            with temporary.open("w", opener=lambda path, flags: os.open(path, flags, 0o600)) as output:
+                output.write(json.dumps(actors, indent=2) + "\n")
+            temporary.replace(credentials)
     server_env = dict(env, HOLOCRON_DATABASE_URL=APP, HOLOCRON_LISTEN="127.0.0.1:8080")
     server_env.pop("HOLOCRON_ADMIN_DATABASE_URL", None)
     with (STATE / "server.log").open("a") as log:

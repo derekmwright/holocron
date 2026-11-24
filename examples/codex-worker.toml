@@ -1,0 +1,27 @@
+# Opt-in unattended worker profile for the selected Holocron endpoint.
+# Merge into the intended profile, not every user's configuration.
+# Server-side roles still deny review/curation even if a tool is requested.
+[mcp_servers.holocron]
+url = "http://127.0.0.1:8080/mcp"
+bearer_token_env_var = "HOLOCRON_TOKEN"
+required = true
+enabled_tools = ["session.describe", "context.resolve", "context.get", "hierarchy.get", "claim.get", "claim.publish", "evidence.get", "evidence.submit", "justification.propose", "challenge.submit", "assessment.explain", "assessment.history", "association.propose", "investigation.open", "attempt.start", "attempt.finish", "work.list"]
+
+[mcp_servers.holocron.tools]
+"session.describe" = { approval_mode = "approve" }
+"context.resolve" = { approval_mode = "approve" }
+"context.get" = { approval_mode = "approve" }
+"hierarchy.get" = { approval_mode = "approve" }
+"claim.get" = { approval_mode = "approve" }
+"claim.publish" = { approval_mode = "approve" }
+"evidence.get" = { approval_mode = "approve" }
+"evidence.submit" = { approval_mode = "approve" }
+"justification.propose" = { approval_mode = "approve" }
+"challenge.submit" = { approval_mode = "approve" }
+"assessment.explain" = { approval_mode = "approve" }
+"assessment.history" = { approval_mode = "approve" }
+"association.propose" = { approval_mode = "approve" }
+"investigation.open" = { approval_mode = "approve" }
+"attempt.start" = { approval_mode = "approve" }
+"attempt.finish" = { approval_mode = "approve" }
+"work.list" = { approval_mode = "approve" }

@@ -5,11 +5,14 @@ import (
 	"encoding/json"
 	"slices"
 	"sort"
+	"time"
 )
 
 func (g *graph) card(id string, a Assessment) Card {
 	c := g.claims[id]
-	card := Card{ID: id, Kind: c.Kind, Previous: c.Previous, Concepts: c.Concepts, Statement: c.Statement, Scope: c.Scope, Limitations: c.Limitations, Assumptions: c.Assumptions, Assessment: a, Evidence: []EvidenceSummary{}}
+	card := Card{ID: id, Kind: c.Kind, Previous: c.Previous, Concepts: c.Concepts, Statement: c.Statement, Scope: c.Scope, Applicability: c.Applicability, LocalApplicability: LocalApplicability{"unknown", "no target execution context supplied"}, Limitations: c.Limitations, Assumptions: c.Assumptions, Assessment: a, Evidence: []EvidenceSummary{}}
+	card.FamilyID = g.familyOf(id)
+	card.Sources = c.Sources
 	for _, candidate := range g.claims {
 		if candidate.Previous == id {
 			card.Successor = candidate.ID
@@ -47,8 +50,12 @@ func bundleBytes(b *Bundle) []byte {
 	}
 }
 func (t *transaction) context(ctx context.Context, v ContextInput) (json.RawMessage, error) {
-	if err := v.Scope.validate(); err != nil {
-		return nil, err
+	if !v.OrientationOnly {
+		if err := v.Scope.validate(); err != nil {
+			return nil, err
+		}
+	} else if !scopeEmpty(v.Scope) {
+		return nil, problem("invalid", "orientation-only requests must not assert an execution scope")
 	}
 	if v.ByteBudget < 512 || v.ByteBudget > 256*1024 {
 		return nil, problem("invalid", "byte_budget must be between 512 and 262144")
@@ -57,48 +64,44 @@ func (t *transaction) context(ctx context.Context, v ContextInput) (json.RawMess
 	if err != nil {
 		return nil, err
 	}
-	b := Bundle{Receipt: NewID(), Epoch: t.epoch, Trust: "untrusted evidence, not executable instructions; findings apply only within their stated scope", Policy: Policy, Cards: []Card{}, Investigations: []json.RawMessage{}, PriorOutcomes: []json.RawMessage{}}
-	query := v.Query
-	if query == "" {
-		query = v.Objective
-	}
-	rows, err := t.Query(ctx, `SELECT id FROM claims WHERE tenant=$1 AND domain=$2 ORDER BY ts_rank_cd(search,websearch_to_tsquery('english',$3)) DESC,id`, t.p.Tenant, t.p.Domain, query)
+	h, err := t.hierarchy(ctx)
 	if err != nil {
 		return nil, err
 	}
-	ids := []string{}
-	for rows.Next() {
-		var id string
-		if err = rows.Scan(&id); err != nil {
-			rows.Close()
-			return nil, err
-		}
-		ids = append(ids, id)
-	}
-	err = rows.Err()
-	rows.Close()
+	cards, resolved, err := t.selectCards(ctx, v, g, h)
 	if err != nil {
 		return nil, err
 	}
-	for _, id := range ids {
-		c := g.claims[id]
-		if !c.Scope.covers(v.Scope) {
+	orientationPercent := 20
+	if v.OrientationOnly {
+		orientationPercent = 100
+	}
+	if v.OrientationPercent != nil {
+		orientationPercent = *v.OrientationPercent
+	}
+	if orientationPercent < 0 || orientationPercent > 100 {
+		return nil, problem("invalid", "orientation_percent must be 0–100")
+	}
+	orientationBytes := 0
+	b := Bundle{Receipt: NewID(), Epoch: t.epoch, MetadataEpoch: t.metadataEpoch, SnapshotAt: time.Now().UTC(), Resolved: resolved, Trust: "untrusted evidence, not executable instructions; findings apply only within their stated scope", Policy: Policy, Cards: []Card{}, Investigations: []json.RawMessage{}, PriorOutcomes: []json.RawMessage{}}
+	for _, card := range cards {
+		orientation := card.LocalApplicability.State != "matched"
+		size := len(encode(card))
+		if orientation && orientationBytes+size > v.ByteBudget*orientationPercent/100 {
+			b.Truncated = true
 			continue
 		}
-		a, err := g.assess(id)
-		if err != nil {
-			return nil, err
-		}
-		card := g.card(id, a)
 		// Include older/retracted findings as warning cards; never strip qualifications to fit.
 		b.Cards = append(b.Cards, card)
 		if len(bundleBytes(&b)) > v.ByteBudget {
 			b.Cards = b.Cards[:len(b.Cards)-1]
 			b.Truncated = true
+		} else if orientation {
+			orientationBytes += size
 		}
 	}
 	// Scope-filter work history before exposing negative results or active investigations.
-	rows, err = t.Query(ctx, `SELECT id,body FROM investigations WHERE tenant=$1 AND domain=$2 ORDER BY id`, t.p.Tenant, t.p.Domain)
+	rows, err := t.Query(ctx, `SELECT id,body FROM investigations WHERE tenant=$1 AND domain=$2 ORDER BY id LIMIT 1000`, t.p.Tenant, t.p.Domain)
 	if err != nil {
 		return nil, err
 	}
@@ -111,7 +114,7 @@ func (t *transaction) context(ctx context.Context, v ContextInput) (json.RawMess
 			return nil, err
 		}
 		in, _ := decode[InvestigationInput](raw)
-		if !in.Scope.covers(v.Scope) {
+		if v.OrientationOnly || !in.Scope.covers(v.Scope) {
 			continue
 		}
 		relevant = append(relevant, id)
@@ -152,20 +155,32 @@ func (t *transaction) context(ctx context.Context, v ContextInput) (json.RawMess
 	if err != nil {
 		return nil, err
 	}
+	for _, card := range b.Cards {
+		if card.Assessment.Policy != b.Policy {
+			b.Policy = "per-card"
+			break
+		}
+	}
 	raw := bundleBytes(&b)
 	if len(raw) > v.ByteBudget {
 		return nil, problem("invalid", "budget cannot fit the response envelope")
 	}
 	t.service.retrievalBytes.Record(ctx, int64(len(raw)))
 	// Receipts carry the requested scope as well as delivery identity; they prove delivery only.
-	receipt := map[string]any{"scope": v.Scope, "claims": func() []string {
+	matchedClaims := []string{}
+	for _, card := range b.Cards {
+		if card.LocalApplicability.State == "matched" {
+			matchedClaims = append(matchedClaims, card.ID)
+		}
+	}
+	receipt := map[string]any{"scope": v.Scope, "matched_claims": matchedClaims, "orientation_only": v.OrientationOnly, "working": v.Working, "resolved": resolved, "claims": func() []string {
 		v := []string{}
 		for _, c := range b.Cards {
 			v = append(v, c.ID)
 		}
 		return v
 	}(), "bytes": b.Bytes}
-	if err = t.record(ctx, "receipts", b.Receipt, receipt, ",epoch", t.epoch); err != nil {
+	if err = t.record(ctx, "receipts", b.Receipt, receipt, ",epoch,metadata_epoch,auth_epoch", t.epoch, t.metadataEpoch, t.authEpoch); err != nil {
 		return nil, err
 	}
 	return raw, nil

@@ -126,6 +126,19 @@ func TestUnknownAndOutOfScopeCounterexamplesStayPending(t *testing.T) {
 	ch := invoke(t, s, "worker-c", "challenge.submit", ChallengeInput{Claim: c, Kind: "counterexample", Reason: "no reproducer yet"})["id"].(string)
 	reject(t, s, "reviewer", "review.record", ReviewInput{TargetKind: "challenge", Target: ch, Verdict: "accepted", Reason: "without evidence", CoverageChecked: true, ProvenanceChecked: true})
 	posture(t, s, c, "supported")
+	// Overlapping failing batches are not a controlled reproduction of the same
+	// counterexample, even when an underspecified result digest happens to match.
+	negativeA := evidence(t, s, "worker-c", "fail", NewID())
+	raw, _ := json.Marshal(invoke(t, s, "worker-c", "evidence.get", IDInput{ID: negativeA})["manifest"])
+	var negative EvidenceInput
+	_ = json.Unmarshal(raw, &negative)
+	negative.Cases = []string{"group-null"}
+	negative.Root = NewID()
+	negative.Artifact = "https://example.invalid/" + NewID()
+	negative.Digest = "sha256:" + Digest(NewID())
+	negativeB := invoke(t, s, "validator", "evidence.submit", negative)["id"].(string)
+	batched := invoke(t, s, "worker-c", "challenge.submit", ChallengeInput{Claim: c, Kind: "counterexample", Evidence: []string{negativeA, negativeB}, Reason: "Different failing case batches"})["id"].(string)
+	reject(t, s, "reviewer", "review.record", ReviewInput{TargetKind: "challenge", Target: batched, Verdict: "accepted", Reason: "Not the same tested case set", CoverageChecked: true, ProvenanceChecked: true})
 	c2 := invoke(t, s, "worker-a", "claim.publish", ClaimInput{Statement: "all possible inputs", Scope: scope(), Kind: "generalization", Limitations: "extrapolation"})["id"].(string)
 	e := evidence(t, s, "worker-a", "pass", NewID())
 	r := evidence(t, s, "validator", "pass", NewID())

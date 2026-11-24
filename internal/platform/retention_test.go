@@ -20,10 +20,13 @@ func TestDomainPurgeAndRestoreLedger(t *testing.T) {
 	}
 	ctx := context.Background()
 	tenant, domain, token := NewID(), NewID(), NewID()
-	if err := Provision(ctx, url, ProvisionInput{Tenant: tenant, Domain: domain, ID: token, Owner: token, Role: "worker", Token: token, Expires: time.Now().Add(time.Hour)}); err != nil {
+	if err := Provision(ctx, url, ProvisionInput{Tenant: tenant, Domain: domain, ID: token, Owner: token, Role: "worker", Token: token, Expires: time.Now().Add(time.Hour), Curator: true}); err != nil {
 		t.Fatal(err)
 	}
 	c := invoke(t, s, token, "claim.publish", ClaimInput{Statement: "sensitive fixture", Scope: scope(), Kind: "finite_cases", Limitations: "private"})["id"].(string)
+	n := invoke(t, s, token, "node.create", NodeInput{Category: "concept", Kind: "topic", Name: "Sensitive classification"})["id"].(string)
+	a := invoke(t, s, token, "association.propose", AssociationInput{Kind: "claim_concept", Claim: c, Target: n, Reason: "Private association"})["id"].(string)
+	invoke(t, s, token, "association.review", AssociationReviewInput{ID: a, Verdict: "accepted", Reason: "Private curation"})
 	// Include a cached response, which must not outlive deletion of its sources.
 	invoke(t, s, token, "context.get", ContextInput{Scope: scope(), ByteBudget: 4096})
 	pgBin := os.Getenv("PG_BIN")
@@ -44,7 +47,7 @@ func TestDomainPurgeAndRestoreLedger(t *testing.T) {
 	}
 	defer admin.Close(ctx)
 	var count int
-	for _, table := range []string{"claims", "assessments", "commands", "receipts", "outbox", "principals"} {
+	for _, table := range []string{"claims", "assessments", "commands", "receipts", "outbox", "principals", "knowledge_nodes", "knowledge_associations", "association_reviews", "curation_grants"} {
 		if err = admin.QueryRow(ctx, "SELECT count(*) FROM holocron."+table+" WHERE tenant=$1 AND domain=$2", tenant, domain).Scan(&count); err != nil || count != 0 {
 			t.Fatal("purge left payload", table, count, err)
 		}

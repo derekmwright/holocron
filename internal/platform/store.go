@@ -27,14 +27,15 @@ import (
 var Schema string
 
 type Service struct {
-	pool           *pgxpool.Pool
-	MaxClaims      int
-	MaxRecords     int
-	latency        metric.Float64Histogram
-	calls          metric.Int64Counter
-	retrievalBytes metric.Int64Histogram
-	propagation    metric.Int64Histogram
-	build          BuildDescription
+	pool                *pgxpool.Pool
+	MaxClaims           int
+	MaxRecords          int
+	MaxHierarchyRecords int
+	latency             metric.Float64Histogram
+	calls               metric.Int64Counter
+	retrievalBytes      metric.Int64Histogram
+	propagation         metric.Int64Histogram
+	build               BuildDescription
 }
 
 type BuildDescription struct {
@@ -94,6 +95,11 @@ func Open(ctx context.Context, url string) (*Service, error) {
 		}
 		return nil, fmt.Errorf("runtime database role must be non-owner, non-superuser, without BYPASSRLS")
 	}
+	var version int
+	if err = p.QueryRow(ctx, `SELECT schema_version FROM holocron.runtime_schema_version()`).Scan(&version); err != nil || version != SchemaVersion {
+		p.Close()
+		return nil, fmt.Errorf("runtime requires schema version %d; run migrate", SchemaVersion)
+	}
 	meter := otel.Meter("holocron")
 	latency, _ := meter.Float64Histogram("holocron.operation.duration", metric.WithUnit("s"))
 	calls, _ := meter.Int64Counter("holocron.operations")
@@ -104,7 +110,7 @@ func Open(ctx context.Context, url string) (*Service, error) {
 		p.Close()
 		return nil, err
 	}
-	return &Service{pool: p, MaxClaims: 1000, MaxRecords: 10000, latency: latency, calls: calls, retrievalBytes: retrievalBytes, propagation: propagation, build: build}, nil
+	return &Service{pool: p, MaxClaims: 1000, MaxRecords: 10000, MaxHierarchyRecords: 5000, latency: latency, calls: calls, retrievalBytes: retrievalBytes, propagation: propagation, build: build}, nil
 }
 func (s *Service) Close() { s.pool.Close() }
 func (s *Service) Authenticate(ctx context.Context, token string) error {
@@ -130,9 +136,12 @@ func decode[T any](b []byte) (T, error) {
 
 type transaction struct {
 	pgx.Tx
-	p       Principal
-	epoch   int64
-	service *Service
+	p               Principal
+	epoch           int64
+	metadataEpoch   int64
+	authEpoch       int64
+	metadataChanged bool
+	service         *Service
 }
 
 func (s *Service) begin(ctx context.Context, token string) (*transaction, error) {
@@ -155,8 +164,8 @@ func (s *Service) begin(ctx context.Context, token string) (*transaction, error)
 	if _, err = tx.Exec(ctx, `SELECT set_config('holocron.tenant',$1,true),set_config('holocron.domain',$2,true)`, p.Tenant, p.Domain); err != nil {
 		return fail(err)
 	}
-	var epoch int64
-	if err = tx.QueryRow(ctx, `SELECT epoch FROM domains WHERE tenant=$1 AND id=$2 FOR UPDATE`, p.Tenant, p.Domain).Scan(&epoch); err != nil {
+	var epoch, metadataEpoch, authEpoch int64
+	if err = tx.QueryRow(ctx, `SELECT epoch,metadata_epoch,auth_epoch FROM domains WHERE tenant=$1 AND id=$2 FOR UPDATE`, p.Tenant, p.Domain).Scan(&epoch, &metadataEpoch, &authEpoch); err != nil {
 		return fail(err)
 	}
 	// Credential revocation and domain writes use the same domain lock in admin operations.
@@ -164,7 +173,7 @@ func (s *Service) begin(ctx context.Context, token string) (*transaction, error)
 	if err = tx.QueryRow(ctx, `SELECT id FROM holocron.authenticate($1)`, Digest(token)).Scan(&id); err != nil {
 		return fail(problem("unauthorized", "credential revoked"))
 	}
-	return &transaction{Tx: tx, p: p, epoch: epoch, service: s}, nil
+	return &transaction{Tx: tx, p: p, epoch: epoch, metadataEpoch: metadataEpoch, authEpoch: authEpoch, service: s}, nil
 }
 func (s *Service) Execute(ctx context.Context, token, op, key string, body json.RawMessage) (out json.RawMessage, err error) {
 	start := time.Now()
@@ -205,10 +214,14 @@ func (s *Service) Execute(ctx context.Context, token, op, key string, body json.
 	defer tx.Rollback(context.Background())
 	var oldHash string
 	var old json.RawMessage
-	err = tx.QueryRow(ctx, `SELECT digest,response FROM commands WHERE tenant=$1 AND domain=$2 AND author=$3 AND operation=$4 AND key=$5`, tx.p.Tenant, tx.p.Domain, tx.p.ID, op, key).Scan(&oldHash, &old)
+	var oldAuth int64
+	err = tx.QueryRow(ctx, `SELECT digest,response,auth_epoch FROM commands WHERE tenant=$1 AND domain=$2 AND author=$3 AND operation=$4 AND key=$5`, tx.p.Tenant, tx.p.Domain, tx.p.ID, op, key).Scan(&oldHash, &old, &oldAuth)
 	if err == nil {
 		if oldHash != hash {
 			return nil, problem("conflict", "idempotency key already used with different arguments")
+		}
+		if oldAuth != tx.authEpoch {
+			return nil, problem("conflict", "authorization changed; original operation is retained but its response cannot be replayed")
 		}
 		return old, nil
 	}
@@ -221,6 +234,17 @@ func (s *Service) Execute(ctx context.Context, token, op, key string, body json.
 		return nil, err
 	}
 	out, changed, err := tx.dispatch(ctx, op, body)
+	if err == nil && tx.metadataChanged {
+		tx.metadataEpoch++
+		_, err = tx.Exec(ctx, `UPDATE domains SET metadata_epoch=$3 WHERE tenant=$1 AND id=$2`, tx.p.Tenant, tx.p.Domain, tx.metadataEpoch)
+		if err == nil {
+			var h *hierarchy
+			h, err = tx.hierarchy(ctx)
+			if err == nil {
+				err = h.validate()
+			}
+		}
+	}
 	if err == nil && changed {
 		tx.epoch++
 		_, err = tx.Exec(ctx, `UPDATE domains SET epoch=$3 WHERE tenant=$1 AND id=$2`, tx.p.Tenant, tx.p.Domain, tx.epoch)
@@ -241,15 +265,15 @@ func (s *Service) Execute(ctx context.Context, token, op, key string, body json.
 		}
 		return nil, asError(err)
 	}
-	if _, err = tx.Exec(ctx, `INSERT INTO commands VALUES($1,$2,$3,$4,$5,$6,$7)`, tx.p.Tenant, tx.p.Domain, tx.p.ID, op, key, hash, out); err != nil {
+	if _, err = tx.Exec(ctx, `INSERT INTO commands(tenant,domain,author,operation,key,digest,response,auth_epoch) VALUES($1,$2,$3,$4,$5,$6,$7,$8)`, tx.p.Tenant, tx.p.Domain, tx.p.ID, op, key, hash, out, tx.authEpoch); err != nil {
 		return nil, err
 	}
 	event := NewID()
 	if _, err = tx.Exec(ctx, `INSERT INTO audit(tenant,domain,id,author,operation,outcome,epoch) VALUES($1,$2,$3,$4,$5,'accepted',$6)`, tx.p.Tenant, tx.p.Domain, event, tx.p.ID, op, tx.epoch); err != nil {
 		return nil, err
 	}
-	if changed {
-		if _, err = tx.Exec(ctx, `INSERT INTO outbox(tenant,domain,id,epoch,operation) VALUES($1,$2,$3,$4,$5)`, tx.p.Tenant, tx.p.Domain, event, tx.epoch, op); err != nil {
+	if changed || tx.metadataChanged {
+		if _, err = tx.Exec(ctx, `INSERT INTO outbox(tenant,domain,id,epoch,operation,metadata_epoch) VALUES($1,$2,$3,$4,$5,$6)`, tx.p.Tenant, tx.p.Domain, event, tx.epoch, op, tx.metadataEpoch); err != nil {
 			return nil, err
 		}
 	}

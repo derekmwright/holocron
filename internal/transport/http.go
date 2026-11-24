@@ -112,6 +112,15 @@ func add[T any](server *mcp.Server, s *platform.Service, name, description strin
 }
 func MCP(s *platform.Service) *mcp.Server {
 	server := mcp.NewServer(&mcp.Implementation{Name: "holocron", Version: "0.1.0"}, nil)
+	add[platform.NodeInput](server, s, "node.create", "Curator-only creation of an organizational entity or concept; grants no factual support or access.")
+	add[platform.NodeRevisionInput](server, s, "node.revise", "Curator-only metadata revision with optimistic version checking; retains identity and history.")
+	add[platform.EdgeInput](server, s, "edge.add", "Curator-only typed organizational/conceptual relation; containment and broader cycles are rejected.")
+	add[platform.RetractionInput](server, s, "edge.retract", "Curator-only retirement of a metadata edge, preserving history and evidence posture.")
+	add[platform.AssociationInput](server, s, "association.propose", "Propose a classification or accountable home; not used in curated retrieval until accepted.")
+	add[platform.AssociationReviewInput](server, s, "association.review", "Explicit curator acceptance or rejection of metadata; never evidence review.")
+	add[platform.PlacementTransferInput](server, s, "placement.transfer", "Curator-authorized atomic home/steward transfer inside this visibility domain, with historical lineage.")
+	add[platform.HierarchyLookup](server, s, "hierarchy.get", "Read bounded current organizational and conceptual metadata with node revision history.")
+	add[platform.ResolveInput](server, s, "context.resolve", "Resolve authorized working-context IDs and validate containment and repository identity, without granting applicability.")
 	add[struct{}](server, s, "session.describe", "Return your authenticated principal and role, running binary digest, and embedded source revision. Empty revision or modified=true means an unpinned source build.")
 	add[platform.ClaimInput](server, s, "claim.publish", "Publish an immutable scoped claim revision; publishing does not establish correctness.")
 	add[platform.EvidenceInput](server, s, "evidence.submit", "Record an attributed execution manifest. References are not fetched or executed.")

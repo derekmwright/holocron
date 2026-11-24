@@ -12,22 +12,41 @@ import (
 
 var Operations = []string{"session.describe", "claim.publish", "evidence.submit", "justification.propose", "challenge.submit", "review.record", "record.retract", "assessment.explain", "assessment.history", "evidence.get", "claim.get", "context.get", "investigation.open", "attempt.start", "attempt.finish", "work.list", "experiment.export", "events.poll", "events.ack"}
 
+func init() {
+	Operations = append(Operations, "node.create", "node.revise", "edge.add", "edge.retract", "association.propose", "association.review", "placement.transfer", "hierarchy.get", "context.resolve")
+}
+
 func knownOperation(op string) bool { return slices.Contains(Operations, op) }
 func (t *transaction) dispatch(ctx context.Context, op string, b json.RawMessage) (json.RawMessage, bool, error) {
 	id := NewID()
 	result := encode(map[string]string{"id": id})
 	switch op {
+	case "node.create", "node.revise", "edge.add", "edge.retract", "association.propose", "association.review", "placement.transfer", "hierarchy.get", "context.resolve":
+		return t.hierarchyCommand(ctx, op, b, id)
 	case "session.describe":
 		if _, err := decode[struct{}](b); err != nil {
 			return nil, false, err
 		}
-		return encode(map[string]any{"identity": map[string]string{"id": t.p.ID, "role": t.p.Role, "owner": t.p.Owner, "tenant": t.p.Tenant, "domain": t.p.Domain}, "build": t.service.build, "policy": Policy}), false, nil
+		var curate bool
+		if err := t.QueryRow(ctx, `SELECT can_curate($1)`, t.p.ID).Scan(&curate); err != nil {
+			return nil, false, err
+		}
+		return encode(map[string]any{"identity": map[string]string{"id": t.p.ID, "role": t.p.Role, "owner": t.p.Owner, "tenant": t.p.Tenant, "domain": t.p.Domain}, "capabilities": map[string]bool{"curate": curate}, "build": t.service.build, "policy": Policy, "verification_policies": []string{Policy, MatrixPolicy}, "schema_version": SchemaVersion}), false, nil
 	case "claim.publish":
 		v, err := decode[ClaimInput](b)
 		if err != nil {
 			return nil, false, err
 		}
-		if err = v.Scope.validate(); err != nil {
+		if err = v.validateApplicability(); err != nil {
+			return nil, false, err
+		}
+		if err = validateSources(v.Sources); err != nil {
+			return nil, false, err
+		}
+		if len(v.Assumptions) > 64 {
+			return nil, false, problem("invalid", "too many assumptions")
+		}
+		if err = unique(v.Assumptions); err != nil {
 			return nil, false, err
 		}
 		if err = required(v.Statement, v.Kind, v.Limitations); err != nil {
@@ -135,6 +154,9 @@ func (t *transaction) dispatch(ctx context.Context, op string, b json.RawMessage
 		}
 		if err = required(v.Claim, v.Warrant, v.Limitations); err != nil {
 			return nil, false, err
+		}
+		if v.InferenceKind != "" && !slices.Contains([]string{"reproduction", "deduction", "analogy", "bounded_generalization"}, v.InferenceKind) {
+			return nil, false, problem("invalid", "unknown inference kind")
 		}
 		if len(v.Evidence) < 1 || len(v.Evidence) > 20 || len(v.Premises) > 20 {
 			return nil, false, problem("invalid", "bounded evidence and premise sets required")
@@ -261,10 +283,7 @@ func (t *transaction) dispatch(ctx context.Context, op string, b json.RawMessage
 					}
 				}
 				c := g.claims[j.Claim]
-				if c.Kind != "finite_cases" {
-					return nil, false, problem("invalid", "policy does not establish generalized claims")
-				}
-				if reasons := g.evidencePair(j.Evidence, c.Scope, "pass"); len(reasons) > 0 {
+				if reasons := g.supportReasons(j, c); len(reasons) > 0 {
 					return nil, false, problem("invalid", strings.Join(reasons, "; "))
 				}
 			}
@@ -276,7 +295,7 @@ func (t *transaction) dispatch(ctx context.Context, op string, b json.RawMessage
 					}
 				}
 				if ch.Kind == "counterexample" {
-					if reasons := g.evidencePair(ch.Evidence, g.claims[ch.Claim].Scope, "fail"); len(reasons) > 0 {
+					if reasons := g.counterReasons(ch.Evidence, g.claims[ch.Claim]); len(reasons) > 0 {
 						return nil, false, problem("invalid", strings.Join(reasons, "; "))
 					}
 				}
@@ -359,7 +378,14 @@ func (t *transaction) dispatch(ctx context.Context, op string, b json.RawMessage
 		if op == "assessment.explain" {
 			return encode(a), false, nil
 		}
-		return encode(g.card(v.ID, a)), false, nil
+		h, err := t.hierarchy(ctx)
+		if err != nil {
+			return nil, false, err
+		}
+		card := g.card(v.ID, a)
+		card.MetadataEpoch = t.metadataEpoch
+		h.decorate(&card, g)
+		return encode(card), false, nil
 	case "context.get":
 		v, err := decode[ContextInput](b)
 		if err != nil {

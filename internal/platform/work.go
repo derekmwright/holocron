@@ -59,6 +59,9 @@ func (t *transaction) work(ctx context.Context, op string, b json.RawMessage, id
 		if err = unique(v.Applied); err != nil {
 			return nil, false, err
 		}
+		if err = unique(v.Considered); err != nil {
+			return nil, false, err
+		}
 		if err = unique(v.Findings); err != nil {
 			return nil, false, err
 		}
@@ -83,22 +86,24 @@ func (t *transaction) work(ctx context.Context, op string, b json.RawMessage, id
 			return nil, false, problem("forbidden", "receipt belongs to another participant")
 		}
 		var receipt struct {
-			Scope  Scope    `json:"scope"`
-			Claims []string `json:"claims"`
-			Bytes  int      `json:"bytes"`
+			Scope           Scope     `json:"scope"`
+			Claims          []string  `json:"claims"`
+			MatchedClaims   *[]string `json:"matched_claims"`
+			OrientationOnly bool      `json:"orientation_only"`
+			Bytes           int       `json:"bytes"`
 		}
 		if err = json.Unmarshal(raw, &receipt); err != nil {
 			return nil, false, err
 		}
-		var epoch int64
-		if err = t.QueryRow(ctx, `SELECT epoch FROM receipts WHERE tenant=$1 AND domain=$2 AND id=$3`, t.p.Tenant, t.p.Domain, v.Receipt).Scan(&epoch); err != nil {
+		var epoch, metadataEpoch, authEpoch int64
+		if err = t.QueryRow(ctx, `SELECT epoch,metadata_epoch,auth_epoch FROM receipts WHERE tenant=$1 AND domain=$2 AND id=$3`, t.p.Tenant, t.p.Domain, v.Receipt).Scan(&epoch, &metadataEpoch, &authEpoch); err != nil {
 			return nil, false, err
 		}
 		// Negative and interrupted attempts remain reportable after expiry/staleness.
-		if v.Outcome == "completed" && (epoch != t.epoch || !in.Deadline.After(time.Now()) || v.Tokens > in.BudgetTokens) {
+		if v.Outcome == "completed" && (epoch != t.epoch || metadataEpoch != t.metadataEpoch || authEpoch != t.authEpoch || !in.Deadline.After(time.Now()) || v.Tokens > in.BudgetTokens) {
 			return nil, false, problem("conflict", "completion requires current context and unexceeded contract budget/deadline")
 		}
-		if !receipt.Scope.covers(in.Scope) {
+		if receipt.OrientationOnly || !receipt.Scope.covers(in.Scope) {
 			return nil, false, problem("invalid", "context receipt does not cover the work contract")
 		}
 		g, err := t.graph(ctx)
@@ -109,12 +114,23 @@ func (t *transaction) work(ctx context.Context, op string, b json.RawMessage, id
 			if !slices.Contains(receipt.Claims, claim) {
 				return nil, false, problem("invalid", "applied claim was not delivered in this receipt")
 			}
+			if receipt.MatchedClaims != nil && !slices.Contains(*receipt.MatchedClaims, claim) {
+				return nil, false, problem("conflict", "orientation or mismatched knowledge cannot be reported as locally applied; use considered")
+			}
 			a, err := g.assess(claim)
 			if err != nil {
 				return nil, false, err
 			}
 			if v.Outcome == "completed" && ((in.RequireSupported && (a.Posture != "supported" || a.Health != "current" || a.Lifecycle != "active")) || (in.RequireNoPending && a.Pending)) {
 				return nil, false, problem("conflict", "applied claim does not meet completion policy")
+			}
+		}
+		for _, claim := range v.Considered {
+			if !slices.Contains(receipt.Claims, claim) {
+				return nil, false, problem("invalid", "considered claim was not delivered")
+			}
+			if _, ok := g.claims[claim]; !ok {
+				return nil, false, problem("not_found", "claim not found")
 			}
 		}
 		for _, claim := range v.Findings {
@@ -191,7 +207,7 @@ func (t *transaction) events(ctx context.Context, op string, b json.RawMessage) 
 		_, err = t.Exec(ctx, `INSERT INTO deliveries(tenant,domain,consumer,event) VALUES($1,$2,$3,$4) ON CONFLICT DO NOTHING`, t.p.Tenant, t.p.Domain, v.Consumer, v.Event)
 		return encode(map[string]bool{"acknowledged": err == nil}), false, err
 	}
-	rows, err := t.Query(ctx, `SELECT o.id,o.epoch,o.operation FROM outbox o WHERE o.tenant=$1 AND o.domain=$2 AND NOT EXISTS(SELECT FROM deliveries d WHERE (d.tenant,d.domain,d.event)=(o.tenant,o.domain,o.id) AND d.consumer=$3) ORDER BY epoch,id LIMIT 100`, t.p.Tenant, t.p.Domain, v.Consumer)
+	rows, err := t.Query(ctx, `SELECT o.id,o.epoch,o.operation,o.metadata_epoch FROM outbox o WHERE o.tenant=$1 AND o.domain=$2 AND NOT EXISTS(SELECT FROM deliveries d WHERE (d.tenant,d.domain,d.event)=(o.tenant,o.domain,o.id) AND d.consumer=$3) ORDER BY epoch,metadata_epoch,id LIMIT 100`, t.p.Tenant, t.p.Domain, v.Consumer)
 	if err != nil {
 		return nil, false, err
 	}
@@ -200,10 +216,11 @@ func (t *transaction) events(ctx context.Context, op string, b json.RawMessage) 
 	for rows.Next() {
 		var id, op string
 		var epoch int64
-		if err = rows.Scan(&id, &epoch, &op); err != nil {
+		var metadataEpoch int64
+		if err = rows.Scan(&id, &epoch, &op, &metadataEpoch); err != nil {
 			return nil, false, err
 		}
-		events = append(events, map[string]any{"id": id, "epoch": epoch, "operation": op})
+		events = append(events, map[string]any{"id": id, "epoch": epoch, "metadata_epoch": metadataEpoch, "operation": op})
 	}
 	return encode(map[string]any{"events": events}), false, rows.Err()
 }

@@ -78,14 +78,16 @@ func unique(ids []string) error {
 }
 
 type ClaimInput struct {
-	Statement   string     `json:"statement"`
-	Scope       Scope      `json:"scope"`
-	Kind        string     `json:"kind"`
-	Limitations string     `json:"limitations"`
-	Assumptions []string   `json:"assumptions,omitempty"`
-	Concepts    []string   `json:"concepts,omitempty"`
-	Previous    string     `json:"previous,omitempty"`
-	ReviewAfter *time.Time `json:"review_after,omitempty"`
+	Statement     string                 `json:"statement"`
+	Scope         Scope                  `json:"scope,omitempty,omitzero"`
+	Kind          string                 `json:"kind"`
+	Limitations   string                 `json:"limitations"`
+	Assumptions   []string               `json:"assumptions,omitempty"`
+	Concepts      []string               `json:"concepts,omitempty"`
+	Previous      string                 `json:"previous,omitempty"`
+	ReviewAfter   *time.Time             `json:"review_after,omitempty"`
+	Applicability *ApplicabilityEnvelope `json:"applicability,omitempty"`
+	Sources       []SourceReference      `json:"sources,omitempty"`
 }
 type EvidenceInput struct {
 	Scope          Scope     `json:"scope"`
@@ -107,11 +109,12 @@ type EvidenceInput struct {
 	Shared         []string  `json:"shared"`
 }
 type JustificationInput struct {
-	Claim       string   `json:"claim"`
-	Evidence    []string `json:"evidence"`
-	Premises    []string `json:"premises,omitempty"`
-	Warrant     string   `json:"warrant"`
-	Limitations string   `json:"limitations"`
+	Claim         string   `json:"claim"`
+	Evidence      []string `json:"evidence"`
+	Premises      []string `json:"premises,omitempty"`
+	Warrant       string   `json:"warrant"`
+	Limitations   string   `json:"limitations"`
+	InferenceKind string   `json:"inference_kind,omitempty"`
 }
 type ChallengeInput struct {
 	Claim         string   `json:"claim"`
@@ -137,10 +140,15 @@ type IDInput struct {
 	ID string `json:"id"`
 }
 type ContextInput struct {
-	Scope      Scope  `json:"scope"`
-	Query      string `json:"query,omitempty"`
-	Objective  string `json:"objective,omitempty"`
-	ByteBudget int    `json:"byte_budget"`
+	Scope              Scope           `json:"scope,omitempty,omitzero"`
+	Query              string          `json:"query,omitempty"`
+	Objective          string          `json:"objective,omitempty"`
+	ByteBudget         int             `json:"byte_budget"`
+	Working            *WorkingContext `json:"working,omitempty"`
+	Discovery          string          `json:"discovery,omitempty"`
+	OrientationOnly    bool            `json:"orientation_only,omitempty"`
+	OrientationPercent *int            `json:"orientation_percent,omitempty"`
+	Claims             []string        `json:"claims,omitempty"`
 }
 type InvestigationInput struct {
 	Objective        string    `json:"objective"`
@@ -165,6 +173,7 @@ type FinishInput struct {
 	Outcome         string   `json:"outcome"`
 	Disposition     string   `json:"disposition"`
 	Applied         []string `json:"applied"`
+	Considered      []string `json:"considered,omitempty"`
 	Findings        []string `json:"findings"`
 	NegativeResults []string `json:"negative_results"`
 	Questions       []string `json:"questions"`
@@ -238,21 +247,32 @@ type EvidenceSummary struct {
 	Limitations string   `json:"limitations"`
 }
 type Card struct {
-	ID          string            `json:"id"`
-	Kind        string            `json:"kind"`
-	Previous    string            `json:"previous,omitempty"`
-	Successor   string            `json:"successor,omitempty"`
-	Concepts    []string          `json:"concepts"`
-	Statement   string            `json:"statement"`
-	Scope       Scope             `json:"scope"`
-	Limitations string            `json:"limitations"`
-	Assumptions []string          `json:"assumptions"`
-	Assessment  Assessment        `json:"assessment"`
-	Evidence    []EvidenceSummary `json:"evidence"`
+	ID                 string                 `json:"id"`
+	FamilyID           string                 `json:"family_id"`
+	Kind               string                 `json:"kind"`
+	Previous           string                 `json:"previous,omitempty"`
+	Successor          string                 `json:"successor,omitempty"`
+	Concepts           []string               `json:"concepts"`
+	Statement          string                 `json:"statement"`
+	Scope              Scope                  `json:"scope,omitempty,omitzero"`
+	Applicability      *ApplicabilityEnvelope `json:"applicability,omitempty"`
+	Sources            []SourceReference      `json:"sources,omitempty"`
+	LocalApplicability LocalApplicability     `json:"local_applicability"`
+	Classifications    []KnowledgeAssociation `json:"classifications,omitempty"`
+	Home               *KnowledgeAssociation  `json:"home,omitempty"`
+	RetrievalReasons   []string               `json:"retrieval_reasons,omitempty"`
+	MetadataEpoch      int64                  `json:"metadata_epoch"`
+	Limitations        string                 `json:"limitations"`
+	Assumptions        []string               `json:"assumptions"`
+	Assessment         Assessment             `json:"assessment"`
+	Evidence           []EvidenceSummary      `json:"evidence"`
 }
 type Bundle struct {
 	Receipt        string            `json:"receipt"`
 	Epoch          int64             `json:"epoch"`
+	MetadataEpoch  int64             `json:"metadata_epoch"`
+	SnapshotAt     time.Time         `json:"snapshot_at"`
+	Resolved       *ResolvedContext  `json:"resolved,omitempty"`
 	Trust          string            `json:"trust"`
 	Policy         string            `json:"policy"`
 	Cards          []Card            `json:"cards"`

@@ -44,6 +44,15 @@ func run() error {
 			return err
 		}
 		return platform.Revoke(ctx, os.Getenv("HOLOCRON_ADMIN_DATABASE_URL"), in.Tenant, in.Domain, in.ID)
+	case "set-curation":
+		var in struct {
+			Tenant, Domain, ID string
+			Enabled            bool
+		}
+		if err := json.NewDecoder(os.Stdin).Decode(&in); err != nil {
+			return err
+		}
+		return platform.SetCuration(ctx, os.Getenv("HOLOCRON_ADMIN_DATABASE_URL"), in.Tenant, in.Domain, in.ID, in.Enabled)
 	case "purge-domain":
 		var in struct{ Tenant, Domain string }
 		if err := json.NewDecoder(os.Stdin).Decode(&in); err != nil {
@@ -85,6 +94,6 @@ func run() error {
 		}
 		return nil
 	default:
-		return fmt.Errorf("usage: holocron [serve|migrate|provision|revoke|purge-domain]")
+		return fmt.Errorf("usage: holocron [serve|migrate|provision|revoke|set-curation|purge-domain]")
 	}
 }

@@ -15,12 +15,14 @@ trap cleanup EXIT
 export HOLOCRON_ADMIN_DATABASE_URL="postgresql:///postgres?host=$test_root&sslmode=disable"
 export HOLOCRON_TEST_DATABASE_URL="postgresql://holocron_app@/postgres?host=$test_root&sslmode=disable"
 go run ./cmd/holocron migrate
-for actor in worker-a worker-b worker-c worker-d validator reviewer outsider; do
+for actor in worker-a worker-b worker-c worker-d validator reviewer curator outsider; do
   tenant=demo; domain=wadjet; role=worker
   if [[ "$actor" == validator || "$actor" == reviewer ]]; then role=$actor; fi
   if [[ "$actor" == outsider ]]; then tenant=other; domain=private; fi
+  curator=false
+  if [[ "$actor" == curator ]]; then curator=true; fi
   # These credentials are test-only and only exist inside this disposable cluster.
-  printf '{"Tenant":"%s","Domain":"%s","ID":"%s","Owner":"%s-owner","Role":"%s","Token":"%s","Expires":"2099-01-01T00:00:00Z"}\n' "$tenant" "$domain" "$actor" "$actor" "$role" "$actor" | go run ./cmd/holocron provision
+  printf '{"Tenant":"%s","Domain":"%s","ID":"%s","Owner":"%s-owner","Role":"%s","Token":"%s","Expires":"2099-01-01T00:00:00Z","Curator":%s}\n' "$tenant" "$domain" "$actor" "$actor" "$role" "$actor" "$curator" | go run ./cmd/holocron provision
 done
-go test -race -count=1 ./... "$@"
+go test -race -p 1 -count=1 ./... "$@"
 PYTHONDONTWRITEBYTECODE=1 python3 -m unittest discover -s scripts -p 'test_*.py'

@@ -2,11 +2,14 @@
 
 The service exposes authenticated `POST /v1/{operation}` and MCP Streamable HTTP at `/mcp`. `GET /healthz` reports process liveness only. Both transports call the same application service. Responses are non-cacheable; requests from foreign browser origins are rejected.
 
+The [hierarchy release](hierarchy-release.md) documents metadata operations, envelope v2, working-context resolution, curation authority and migration 2. The [Wadjet bootstrap procedure](wadjet-bootstrap.md) provides a concrete onboarding path.
+
 REST requires `Authorization: Bearer <token>`, `Idempotency-Key: <unique-key>`, and a JSON object body. MCP uses the same bearer credential and arguments shaped as `{"key":"unique-key","arguments":{...}}`. MCP tool schemas describe every field. Do not put a token in arguments. The service resolves tenant, domain, principal, and role from the credential.
 
 | Operation | Input and behavior |
 | --- | --- |
-| `claim.publish` | Statement, exact scope, kind (`finite_cases`, `hypothesis`, `generalization`), limitations; optional assumptions, concept labels, review deadline and previous revision. Returns immutable revision ID. |
+| `session.describe` | Empty object; authenticated principal/role and running binary digest, embedded source revision, dirty-build flag, Go version, and policy. No credentials are returned. An empty revision is explicitly unpinned. |
+| `claim.publish` | Statement, legacy exact scope or explicit applicability envelope v2, kind, limitations; optional assumptions, source references, review deadline and previous revision. Legacy concept strings are annotations, not curated graph associations. |
 | `evidence.submit` | Execution/artifact manifest with declared roots and optional `derived_from` evidence IDs. Unknown provenance is retained but cannot qualify. |
 | `evidence.get` | ID; returns full manifest, attribution, and lifecycle. |
 | `justification.propose` | Claim ID, evidence IDs, premise claim IDs, warrant, limitations. Evidence within a justification is jointly required; justifications are alternatives. |
@@ -16,16 +19,16 @@ REST requires `Authorization: Bearer <token>`, `Idempotency-Key: <unique-key>`, 
 | `assessment.explain` | Claim ID; current policy posture, lifecycle, dependency health, reasons, pending challenges and justification paths. |
 | `assessment.history` | Claim ID; latest 100 stored assessments in descending graph epoch. Current time/credential eligibility can differ from history. |
 | `claim.get` | Claim ID; full qualified card including evidence references. |
-| `context.get` | Exact scope, optional query/objective, byte budget (512–262144); whole qualified cards, relevant work, prior outcomes, truncation flag and receipt. |
+| `context.get` | Exact scope or orientation-only request, optional working IDs/query/objective, discovery mode and byte budget (512–262144); qualified cards, local applicability, work, truncation and receipt. |
 | `investigation.open` | Objective, question, scope, completion criteria, per-attempt token budget, deadline, support/pending-challenge requirements. Contract is immutable. |
 | `attempt.start` | Investigation ID, model, harness, arm (`A`, `B`, `C`, `demo`), task family. Records an attempt; no leases or worker control. |
-| `attempt.finish` | Attempt, receipt, outcome, disposition, applied IDs, findings, negative results, questions, tokens, elapsed milliseconds, cost in millionths of the chosen currency. Empty findings are valid. |
+| `attempt.finish` | Attempt, receipt, outcome, disposition, locally matched applied IDs, considered orientation IDs, findings, negative results, questions and measured usage. Empty findings are valid. |
 | `work.list` | Empty object; up to 1000 contracts, attempts, and outcomes in the current domain. |
 | `experiment.export` | Reviewer-only work export. Costs and completion are agent-reported; external adjudication is necessary. |
 | `events.poll` | Reviewer-only consumer name; up to 100 unacknowledged metadata-only events. Repeat polls redeliver until acknowledged. |
 | `events.ack` | Consumer and event ID; idempotent acknowledgement after durable consumer handling. |
 
-Unknown fields are rejected. Arguments are limited to 256 KiB. Retries return the original response byte-for-byte, even if its graph epoch is now historical. Use a new key to request fresh context. A reused key with different arguments returns conflict.
+Unknown fields are rejected. Arguments are limited to 256 KiB. With unchanged authorization, retries return original bytes even if the snapshot is historical. Authority changes fence old response replay without repeating the mutation. Use new keys for fresh reads, but reconcile previously committed mutations before submitting new mutation keys. Changed arguments under an existing key conflict.
 
 REST errors: 400 invalid arguments, 401 missing/expired credential, 403 insufficient authority, 404 inaccessible or missing record, 409 revision/receipt/idempotency conflict, 422 graph bound, 500 internal failure with details suppressed. MCP returns tool errors for the same application failures. Direct access and cross-tenant requests do not reveal which protected object exists.
 

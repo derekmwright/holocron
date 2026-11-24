@@ -177,14 +177,14 @@ func (g *graph) evidencePair(ids []string, s Scope, outcome string) []string {
 			continue
 		}
 		if outcome == "fail" {
-			overlap := false
+			contained := len(e.Cases) > 0
 			for _, c := range e.Cases {
-				if slices.Contains(s.Cases, c) {
-					overlap = true
+				if !slices.Contains(s.Cases, c) {
+					contained = false
 				}
 			}
-			if !overlap {
-				reasons = append(reasons, "counterexample outside cases "+id)
+			if !contained {
+				reasons = append(reasons, "counterexample must isolate failure within the declared cases "+id)
 				continue
 			}
 		}
@@ -200,6 +200,15 @@ func (g *graph) evidencePair(ids []string, s Scope, outcome string) []string {
 			// Distinct executions and artifacts are necessary, not proof of statistical independence.
 			if a.Author != b.Author && !g.sharedOrigin(a.ID, b.ID) && a.Artifact != b.Artifact && a.Digest != b.Digest && (pb.Role == "validator" || pb.Role == "reviewer" || pb.Role == "admin") && a.Method == b.Method && a.OracleSource == b.OracleSource {
 				if outcome == "fail" {
+					if a.ResultDigest != b.ResultDigest || a.ExpectedDigest != b.ExpectedDigest {
+						continue
+					}
+					ac, bc := slices.Clone(a.Cases), slices.Clone(b.Cases)
+					slices.Sort(ac)
+					slices.Sort(bc)
+					if !slices.Equal(ac, bc) {
+						continue
+					}
 					common := false
 					for _, c := range a.Cases {
 						if slices.Contains(b.Cases, c) && slices.Contains(s.Cases, c) {
@@ -277,7 +286,7 @@ func (g *graph) assess(id string) (Assessment, error) {
 	}
 	g.visiting[id] = true
 	defer delete(g.visiting, id)
-	a := Assessment{Claim: id, Policy: Policy, Epoch: g.epoch, Posture: "unassessed", Health: "current", Lifecycle: "active", Justifications: []Explanation{}, Challenges: []ChallengeExplanation{}, Reasons: []string{}}
+	a := Assessment{Claim: id, Policy: c.policy(), Epoch: g.epoch, Posture: "unassessed", Health: "current", Lifecycle: "active", Justifications: []Explanation{}, Challenges: []ChallengeExplanation{}, Reasons: []string{}}
 	if state := g.lifecycle[id]; state != "" {
 		a.Lifecycle = state
 	}
@@ -303,7 +312,7 @@ func (g *graph) assess(id string) (Assessment, error) {
 		if verdict == "accepted" {
 			if ch.Kind == "methodology" {
 				disabled[ch.Justification] = true
-			} else if r.CoverageChecked && r.ProvenanceChecked && len(g.evidencePair(ch.Evidence, c.Scope, "fail")) == 0 {
+			} else if r.CoverageChecked && r.ProvenanceChecked && len(g.counterReasons(ch.Evidence, c)) == 0 {
 				counter = true
 			} else {
 				verdict = "inconclusive"
@@ -335,10 +344,7 @@ func (g *graph) assess(id string) (Assessment, error) {
 		if disabled[jid] {
 			e.Reasons = append(e.Reasons, "accepted methodological challenge")
 		}
-		if c.Kind != "finite_cases" {
-			e.Reasons = append(e.Reasons, "policy covers finite cases only")
-		}
-		e.Reasons = append(e.Reasons, g.evidencePair(j.Evidence, c.Scope, "pass")...)
+		e.Reasons = append(e.Reasons, g.supportReasons(j, c)...)
 		for _, premise := range j.Premises {
 			p, err := g.assess(premise)
 			if err != nil {

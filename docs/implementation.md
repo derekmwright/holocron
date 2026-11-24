@@ -1,6 +1,6 @@
 # Phase C implementation status
 
-The approved design now has an executable Go/PostgreSQL prototype. Its evidence semantics are intentionally narrower than the long-term platform: one finite-case reproduction policy, exact Git revisions and environment dimensions, one visibility domain per credential, manually assigned work, and no server-side inference.
+The approved design has an executable Go/PostgreSQL prototype with a [single-domain hierarchy extension](hierarchy-release.md). Verification covers exact finite cases and explicitly enumerated context matrices; it does not establish unrestricted principles. Credentials still select one visibility domain, work is manually assigned, and no server-side inference is required.
 
 ## Implemented behavior
 
@@ -22,18 +22,18 @@ The walking-scenario integration test follows A publishing, B retrieving/applyin
 
 ## Validation boundary
 
-Development checks completed on 2026-11-24: 18 Go integration/adversarial test functions (including their subcases) pass against PostgreSQL 17 with `-race`; the two experiment-analysis tests pass; `go vet ./...` passes. The scripted walking scenario is runnable with `bash scripts/demo.sh`. This is test evidence for the prototype, not evidence of agent productivity improvement.
+The hierarchy release includes 36 Go integration/adversarial test functions plus their subcases and the two experiment-analysis tests. It retains the original live-pilot tests and adds migration, context-matrix, curation, metadata-history and Wadjet-bootstrap gates. Run `bash scripts/test-integration.sh` for the real PostgreSQL/race-enabled suite. This is test evidence for platform behavior, not agent productivity improvement.
 
 The real PostgreSQL suite uses a non-owner runtime role and Go's race detector. It tests concurrent cycle insertion, retry conflicts, tenant isolation, pooled-connection identity clearing, malformed/unknown input, scope mismatch, no-trigger results, unknown provenance, infrastructure failure, copied/derived reports, stale completion, empty findings, interrupted work outcomes, history, revocation, and restore/purge behavior. REST/MCP tests exercise protocol initialization/discovery and shared state/authorization. The experiment-analysis tests ensure failures consume cost and unscored completion is not treated as correctness.
 
-These checks do not establish that a worker's reported execution happened, that its oracle is correct, that all prompt injection is contained by a model, or that Holocron improves engineering performance. Reviewer trust and externally executed validation remain part of the system boundary. Real client configuration examples are supplied, but fresh Codex/Claude Code model workflows, adversarial model trials, and the randomized productivity experiment have not been run.
+These checks do not establish that a worker's reported execution happened, that its oracle is correct, that all prompt injection is contained by a model, or that Holocron improves engineering performance. Reviewer trust and externally executed validation remain part of the system boundary. A [first live pilot](live-pilot.md) has now exercised twelve fresh Codex/Claude Code sessions, including a methodology challenge, inconclusive review, revised evidence, and subsequent reuse. Broader adversarial model trials and the randomized productivity experiment remain outstanding.
 
 ## Remaining work before broader use
 
-1. Run the adapter participation protocol in fresh model sessions, including interruption and outage trials; pin model as well as harness versions.
+1. Extend the live adapter pilot to interruption and outage trials; pin model as well as harness versions for controlled comparisons.
 2. Curate and independently review the bounded Wadjet source corpus. This increment does not import historical assertions as findings.
 3. Run the pilot with external correctness scoring and measured usage. Preregister confirmatory thresholds/sample size before making a causal claim.
 4. Introduce granular redaction and external artifact/backup deletion if the deployment's privacy requirements need them. Current privacy deletion removes the whole domain.
 5. Add organization authentication, per-principal quotas, deployment hardening, and measured availability controls before multi-team production use.
 
-No lease scheduler, semantic similarity deduplication, automatic generalization, automatic contradiction resolution, arbitrary policy editor, cross-domain declassification, or general numerical confidence score is present. These omissions preserve the agreed experimental scope.
+No lease scheduler, semantic similarity deduplication, automatic generalization, automatic contradiction resolution, organizational policy-inheritance engine, cross-domain declassification, or numerical confidence score is present. Classification and placement are curated metadata, not truth or authority. See [Wadjet onboarding](wadjet-bootstrap.md) for the next milestone.
