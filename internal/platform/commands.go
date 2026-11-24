@@ -10,13 +10,18 @@ import (
 	"time"
 )
 
-var Operations = []string{"claim.publish", "evidence.submit", "justification.propose", "challenge.submit", "review.record", "record.retract", "assessment.explain", "assessment.history", "evidence.get", "claim.get", "context.get", "investigation.open", "attempt.start", "attempt.finish", "work.list", "experiment.export", "events.poll", "events.ack"}
+var Operations = []string{"session.describe", "claim.publish", "evidence.submit", "justification.propose", "challenge.submit", "review.record", "record.retract", "assessment.explain", "assessment.history", "evidence.get", "claim.get", "context.get", "investigation.open", "attempt.start", "attempt.finish", "work.list", "experiment.export", "events.poll", "events.ack"}
 
 func knownOperation(op string) bool { return slices.Contains(Operations, op) }
 func (t *transaction) dispatch(ctx context.Context, op string, b json.RawMessage) (json.RawMessage, bool, error) {
 	id := NewID()
 	result := encode(map[string]string{"id": id})
 	switch op {
+	case "session.describe":
+		if _, err := decode[struct{}](b); err != nil {
+			return nil, false, err
+		}
+		return encode(map[string]any{"identity": map[string]string{"id": t.p.ID, "role": t.p.Role, "owner": t.p.Owner, "tenant": t.p.Tenant, "domain": t.p.Domain}, "build": t.service.build, "policy": Policy}), false, nil
 	case "claim.publish":
 		v, err := decode[ClaimInput](b)
 		if err != nil {

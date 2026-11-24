@@ -112,6 +112,7 @@ func add[T any](server *mcp.Server, s *platform.Service, name, description strin
 }
 func MCP(s *platform.Service) *mcp.Server {
 	server := mcp.NewServer(&mcp.Implementation{Name: "holocron", Version: "0.1.0"}, nil)
+	add[struct{}](server, s, "session.describe", "Return your authenticated principal and role, running binary digest, and embedded source revision. Empty revision or modified=true means an unpinned source build.")
 	add[platform.ClaimInput](server, s, "claim.publish", "Publish an immutable scoped claim revision; publishing does not establish correctness.")
 	add[platform.EvidenceInput](server, s, "evidence.submit", "Record an attributed execution manifest. References are not fetched or executed.")
 	add[platform.JustificationInput](server, s, "justification.propose", "Propose joint evidence and premises for a claim; requires independent review.")

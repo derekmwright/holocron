@@ -10,6 +10,9 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"os"
+	"runtime"
+	"runtime/debug"
 	"time"
 
 	"github.com/jackc/pgx/v5"
@@ -31,6 +34,43 @@ type Service struct {
 	calls          metric.Int64Counter
 	retrievalBytes metric.Int64Histogram
 	propagation    metric.Int64Histogram
+	build          BuildDescription
+}
+
+type BuildDescription struct {
+	Revision     string `json:"revision"`
+	Modified     bool   `json:"modified"`
+	BinaryDigest string `json:"binary_digest"`
+	GoVersion    string `json:"go_version"`
+}
+
+func describeBuild() (BuildDescription, error) {
+	info := BuildDescription{GoVersion: runtime.Version()}
+	if build, ok := debug.ReadBuildInfo(); ok {
+		for _, setting := range build.Settings {
+			switch setting.Key {
+			case "vcs.revision":
+				info.Revision = setting.Value
+			case "vcs.modified":
+				info.Modified = setting.Value == "true"
+			}
+		}
+	}
+	path, err := os.Executable()
+	if err != nil {
+		return info, err
+	}
+	f, err := os.Open(path)
+	if err != nil {
+		return info, err
+	}
+	defer f.Close()
+	h := sha256.New()
+	if _, err = io.Copy(h, f); err != nil {
+		return info, err
+	}
+	info.BinaryDigest = "sha256:" + hex.EncodeToString(h.Sum(nil))
+	return info, nil
 }
 
 func Open(ctx context.Context, url string) (*Service, error) {
@@ -59,7 +99,12 @@ func Open(ctx context.Context, url string) (*Service, error) {
 	calls, _ := meter.Int64Counter("holocron.operations")
 	retrievalBytes, _ := meter.Int64Histogram("holocron.context.bytes", metric.WithUnit("By"))
 	propagation, _ := meter.Int64Histogram("holocron.assessment.claims")
-	return &Service{pool: p, MaxClaims: 1000, MaxRecords: 10000, latency: latency, calls: calls, retrievalBytes: retrievalBytes, propagation: propagation}, nil
+	build, err := describeBuild()
+	if err != nil {
+		p.Close()
+		return nil, err
+	}
+	return &Service{pool: p, MaxClaims: 1000, MaxRecords: 10000, latency: latency, calls: calls, retrievalBytes: retrievalBytes, propagation: propagation, build: build}, nil
 }
 func (s *Service) Close() { s.pool.Close() }
 func (s *Service) Authenticate(ctx context.Context, token string) error {

@@ -8,6 +8,24 @@ import (
 	"time"
 )
 
+func TestSessionDescriptionUsesAuthenticatedIdentity(t *testing.T) {
+	s := fixture(t)
+	worker := invoke(t, s, "worker-a", "session.describe", struct{}{})
+	identity := worker["identity"].(map[string]any)
+	if identity["id"] != "worker-a" || identity["role"] != "worker" || identity["tenant"] != "demo" {
+		t.Fatalf("wrong identity: %#v", identity)
+	}
+	build := worker["build"].(map[string]any)
+	if len(build["binary_digest"].(string)) != 71 || build["go_version"] == "" {
+		t.Fatalf("missing build identity: %#v", build)
+	}
+	reviewer := invoke(t, s, "reviewer", "session.describe", struct{}{})
+	if reviewer["identity"].(map[string]any)["role"] != "reviewer" {
+		t.Fatal("role not authenticated")
+	}
+	reject(t, s, "worker-a", "session.describe", map[string]string{"role": "reviewer"})
+}
+
 func TestDerivedReportsAndSameArtifactsDoNotReplicate(t *testing.T) {
 	s := fixture(t)
 	for _, mode := range []string{"derived", "same-digest"} {
