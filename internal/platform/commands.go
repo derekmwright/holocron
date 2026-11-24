@@ -52,8 +52,11 @@ func (t *transaction) dispatch(ctx context.Context, op string, b json.RawMessage
 		if err = required(v.Statement, v.Kind, v.Limitations); err != nil {
 			return nil, false, err
 		}
-		if len(v.Statement) > 8192 || !slices.Contains([]string{"finite_cases", "hypothesis", "generalization"}, v.Kind) {
-			return nil, false, problem("invalid", "unsupported claim kind or excessive statement")
+		if err = choice("ClaimInput.kind", v.Kind); err != nil {
+			return nil, false, err
+		}
+		if len(v.Statement) > 8192 {
+			return nil, false, problem("invalid", "statement must not exceed 8192 UTF-8 bytes")
 		}
 		if len(v.Concepts) > 20 {
 			return nil, false, problem("invalid", "too many concept labels")
@@ -94,11 +97,21 @@ func (t *transaction) dispatch(ctx context.Context, op string, b json.RawMessage
 		if err = required(v.Root, v.Artifact, v.Method, v.Command, v.Outcome, v.Provenance, v.Limitations); err != nil {
 			return nil, false, err
 		}
-		if !slices.Contains([]string{"pass", "fail", "inconclusive", "infrastructure_error", "exhausted"}, v.Outcome) || !slices.Contains([]string{"known", "unknown"}, v.Provenance) {
-			return nil, false, problem("invalid", "invalid evidence classification")
+		if err = choice("EvidenceInput.outcome", v.Outcome); err != nil {
+			return nil, false, err
 		}
-		if v.ObservedAt.IsZero() || v.ObservedAt.After(time.Now().Add(5*time.Minute)) || v.TriggerCount < 0 {
-			return nil, false, problem("invalid", "invalid observation time or trigger count")
+		if err = choice("EvidenceInput.provenance", v.Provenance); err != nil {
+			return nil, false, err
+		}
+		if v.ObservedAt.IsZero() {
+			return nil, false, problem("invalid", "observed_at must be the actual non-zero RFC3339 observation timestamp")
+		}
+		now := time.Now()
+		if v.ObservedAt.After(now.Add(5 * time.Minute)) {
+			return nil, false, problem("invalid", "observed_at exceeds the five-minute future-clock allowance; check the run timestamp and timezone, not the deadline; server_time="+now.UTC().Format(time.RFC3339))
+		}
+		if v.TriggerCount < 0 {
+			return nil, false, problem("invalid", "trigger_count must be a non-negative integer; zero records that the trigger did not engage")
 		}
 		if err = unique(v.Cases); err != nil {
 			return nil, false, err
@@ -110,20 +123,23 @@ func (t *transaction) dispatch(ctx context.Context, op string, b json.RawMessage
 		}
 		parsed, err := url.Parse(v.Artifact)
 		if err != nil || parsed.Scheme == "" {
-			return nil, false, problem("invalid", "versioned artifact URI required")
+			return nil, false, problem("invalid", "artifact must be an absolute URI with a scheme; file:///absolute/path/to/capture is valid. Reference the actual capture, not a different GitHub source file; bind its bytes with digest")
 		}
 		if v.Provenance == "known" {
-			for _, value := range []string{v.Digest, v.ResultDigest, v.ExpectedDigest} {
-				digest := strings.TrimPrefix(value, "sha256:")
+			for _, field := range []struct {
+				name, value string
+				required    bool
+			}{{"digest", v.Digest, true}, {"result_digest", v.ResultDigest, false}, {"expected_digest", v.ExpectedDigest, false}} {
+				if field.value == "" && !field.required {
+					continue
+				}
+				digest := strings.TrimPrefix(field.value, "sha256:")
 				_, e := hex.DecodeString(digest)
-				if e != nil || len(digest) != 64 || !strings.HasPrefix(value, "sha256:") {
-					return nil, false, problem("invalid", "known provenance requires manifest, result and expected sha256 digests")
+				if e != nil || len(digest) != 64 || !strings.HasPrefix(field.value, "sha256:") {
+					return nil, false, problem("invalid", field.name+" must be sha256: followed by 64 hexadecimal characters; known provenance requires the actual artifact digest, while comparison digests may be omitted until an oracle is defined")
 				}
 			}
-			if v.OracleSource == "" {
-				return nil, false, problem("invalid", "oracle lineage is required")
-			}
-			if (v.Outcome == "pass" && v.ResultDigest != v.ExpectedDigest) || (v.Outcome == "fail" && v.ResultDigest == v.ExpectedDigest) {
+			if v.ResultDigest != "" && v.ExpectedDigest != "" && ((v.Outcome == "pass" && v.ResultDigest != v.ExpectedDigest) || (v.Outcome == "fail" && v.ResultDigest == v.ExpectedDigest)) {
 				return nil, false, problem("invalid", "outcome contradicts recorded result digests")
 			}
 		}
@@ -155,8 +171,10 @@ func (t *transaction) dispatch(ctx context.Context, op string, b json.RawMessage
 		if err = required(v.Claim, v.Warrant, v.Limitations); err != nil {
 			return nil, false, err
 		}
-		if v.InferenceKind != "" && !slices.Contains([]string{"reproduction", "deduction", "analogy", "bounded_generalization"}, v.InferenceKind) {
-			return nil, false, problem("invalid", "unknown inference kind")
+		if v.InferenceKind != "" {
+			if err = choice("JustificationInput.inference_kind", v.InferenceKind); err != nil {
+				return nil, false, err
+			}
 		}
 		if len(v.Evidence) < 1 || len(v.Evidence) > 20 || len(v.Premises) > 20 {
 			return nil, false, problem("invalid", "bounded evidence and premise sets required")
@@ -202,8 +220,8 @@ func (t *transaction) dispatch(ctx context.Context, op string, b json.RawMessage
 		if err = required(v.Claim, v.Reason); err != nil {
 			return nil, false, err
 		}
-		if v.Kind != "methodology" && v.Kind != "counterexample" {
-			return nil, false, problem("invalid", "challenge kind must be methodology or counterexample")
+		if err = choice("ChallengeInput.kind", v.Kind); err != nil {
+			return nil, false, err
 		}
 		if len(v.Evidence) > 20 {
 			return nil, false, problem("invalid", "too many evidence references")
@@ -253,11 +271,11 @@ func (t *transaction) dispatch(ctx context.Context, op string, b json.RawMessage
 		if err = required(v.Target, v.Reason); err != nil {
 			return nil, false, err
 		}
-		if !slices.Contains([]string{"accepted", "rejected", "inconclusive"}, v.Verdict) {
-			return nil, false, problem("invalid", "invalid review verdict")
+		if err = choice("ReviewInput.verdict", v.Verdict); err != nil {
+			return nil, false, err
 		}
-		if v.TargetKind != "justification" && v.TargetKind != "challenge" {
-			return nil, false, problem("invalid", "invalid review target kind")
+		if err = choice("ReviewInput.target_kind", v.TargetKind); err != nil {
+			return nil, false, err
 		}
 		table := v.TargetKind + "s"
 		_, author, err := t.get(ctx, table, v.Target)
@@ -310,8 +328,8 @@ func (t *transaction) dispatch(ctx context.Context, op string, b json.RawMessage
 		if err = required(v.Target, v.Reason); err != nil {
 			return nil, false, err
 		}
-		if v.TargetKind != "claim" && v.TargetKind != "evidence" {
-			return nil, false, problem("invalid", "invalid lifecycle target")
+		if err = choice("LifecycleInput.target_kind", v.TargetKind); err != nil {
+			return nil, false, err
 		}
 		table := "claims"
 		if v.TargetKind == "evidence" {

@@ -81,6 +81,26 @@ func TestRESTAndMCPUseSameAuthorityAndState(t *testing.T) {
 	if err != nil || len(tools.Tools) != len(platform.Operations) {
 		t.Fatalf("tools: %v %v", tools, err)
 	}
+	for _, tool := range tools.Tools {
+		if tool.Name == "attempt.start" {
+			raw, _ := json.Marshal(tool.InputSchema)
+			var schema map[string]any
+			_ = json.Unmarshal(raw, &schema)
+			args := schema["properties"].(map[string]any)["arguments"].(map[string]any)
+			arm := args["properties"].(map[string]any)["arm"].(map[string]any)
+			if len(arm["enum"].([]any)) != 4 {
+				t.Fatal("wire catalog omitted arm enum")
+			}
+		}
+	}
+	badArm, err := session.CallTool(ctx, &mcp.CallToolParams{Name: "attempt.start", Arguments: map[string]any{"key": platform.NewID(), "arguments": platform.AttemptInput{Investigation: "missing", Model: "model", Harness: "harness", TaskFamily: "source-audit", Arm: "holocron"}}})
+	if err != nil || !badArm.IsError {
+		t.Fatal("bad arm accepted", badArm, err)
+	}
+	badRaw, _ := json.Marshal(badArm)
+	if !bytes.Contains(badRaw, []byte("demo")) || !bytes.Contains(badRaw, []byte("arm")) {
+		t.Fatalf("enum error not actionable: %s", badRaw)
+	}
 	result, err := session.CallTool(ctx, &mcp.CallToolParams{Name: "assessment.explain", Arguments: map[string]any{"key": platform.NewID(), "arguments": platform.IDInput{ID: id}}})
 	if err != nil || result.IsError {
 		t.Fatal(result, err)

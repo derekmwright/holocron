@@ -147,12 +147,24 @@ func (g *graph) evidencePair(ids []string, s Scope, outcome string) []string {
 			continue
 		}
 		p := g.participants[e.Author]
-		if g.lifecycle[id] != "" || p.Revoked || !g.originAvailable(id, map[string]bool{}) {
-			reasons = append(reasons, "unavailable evidence "+id)
+		if g.lifecycle[id] != "" || p.Revoked {
+			reasons = append(reasons, "withdrawn or quarantined evidence "+id)
 			continue
 		}
-		if e.Provenance != "known" || e.Root == "" || e.Digest == "" || e.OracleSource == "" {
+		if e.Provenance != "known" || e.Root == "" || e.Digest == "" {
 			reasons = append(reasons, "unknown provenance "+id)
+			continue
+		}
+		if !g.originAvailable(id, map[string]bool{}) {
+			reasons = append(reasons, "incomplete or withdrawn provenance ancestry "+id)
+			continue
+		}
+		if e.OracleSource == "" {
+			reasons = append(reasons, "comparison oracle not specified "+id)
+			continue
+		}
+		if e.ResultDigest == "" || e.ExpectedDigest == "" {
+			reasons = append(reasons, "comparison digests missing (result_digest and expected_digest) "+id)
 			continue
 		}
 		if e.Outcome != outcome {
@@ -287,6 +299,27 @@ func (g *graph) assess(id string) (Assessment, error) {
 	g.visiting[id] = true
 	defer delete(g.visiting, id)
 	a := Assessment{Claim: id, Policy: c.policy(), Epoch: g.epoch, Posture: "unassessed", Health: "current", Lifecycle: "active", Justifications: []Explanation{}, Challenges: []ChallengeExplanation{}, Reasons: []string{}}
+	profiles := map[string]bool{}
+	profile := func(ids []string) {
+		for _, eid := range ids {
+			if profiles[eid] {
+				continue
+			}
+			profiles[eid] = true
+			e, ok := g.evidence[eid]
+			if !ok {
+				continue
+			}
+			state := g.lifecycle[eid]
+			if state == "" {
+				state = "active"
+			}
+			if g.participants[e.Author].Revoked {
+				state = "quarantined"
+			}
+			a.EvidenceProfile = append(a.EvidenceProfile, EvidenceCondition{ID: eid, Author: e.Author, Provenance: e.Provenance, ReportedOutcome: e.Outcome, Lifecycle: state, ManifestDigestRecorded: e.Digest != "", ResultDigestRecorded: e.ResultDigest != "", ExpectedDigestRecorded: e.ExpectedDigest != "", OracleRecorded: e.OracleSource != ""})
+		}
+	}
 	if state := g.lifecycle[id]; state != "" {
 		a.Lifecycle = state
 	}
@@ -298,6 +331,7 @@ func (g *graph) assess(id string) (Assessment, error) {
 		if ch.Claim != id {
 			continue
 		}
+		profile(ch.Evidence)
 		r, reviewed := g.review("challenge", chid)
 		verdict := "pending"
 		if reviewed {
@@ -328,6 +362,7 @@ func (g *graph) assess(id string) (Assessment, error) {
 		if j.Claim != id {
 			continue
 		}
+		profile(j.Evidence)
 		e := Explanation{Justification: jid, Evidence: j.Evidence, Premises: j.Premises, Reasons: []string{}}
 		r, reviewed := g.review("justification", jid)
 		if !reviewed || r.Verdict != "accepted" {

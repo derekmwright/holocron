@@ -6,6 +6,8 @@ The [hierarchy release](hierarchy-release.md) documents metadata operations, env
 
 REST requires `Authorization: Bearer <token>`, `Idempotency-Key: <unique-key>`, and a JSON object body. MCP uses the same bearer credential and arguments shaped as `{"key":"unique-key","arguments":{...}}`. MCP tool schemas describe every field. Do not put a token in arguments. The service resolves tenant, domain, principal, and role from the credential.
 
+The MCP catalog now advertises categorical enums, case/array limits, digest/URI patterns, numeric bounds and conditional scope/envelope rules. For source-only claims, omit `scope` and use a version-2 unknown-applicability envelope; pinned repository/commit provenance stays in `sources`. The accepted experiment arms are `A`, `B`, `C`, `demo`; attempt outcomes are `completed`, `failed`, `partial`, `timed_out`, `cancelled`, `abandoned`. An unfinished blocked attempt can be recorded as `partial` with its blocker in the disposition/questions. Nothing is silently coerced into another outcome.
+
 | Operation | Input and behavior |
 | --- | --- |
 | `session.describe` | Empty object; authenticated principal/role and running binary digest, embedded source revision, dirty-build flag, Go version, and policy. No credentials are returned. An empty revision is explicitly unpinned. |
@@ -53,7 +55,11 @@ REST errors: 400 invalid arguments, 401 missing/expired credential, 403 insuffic
 
 ## Evidence manifest obligations
 
-An execution manifest includes `scope`, `root`, `artifact` URI, manifest `digest`, `result_digest`, `expected_digest`, `method`, `command`, `oracle_source`, `outcome`, `observed_at`, `cases`, `trigger_count`, `provenance`, `limitations`, and disclosed `shared` dimensions. Digests use `sha256:` followed by 64 hexadecimal characters. The artifact digest identifies the execution manifest, not merely identical stdout. Pass/fail classification must agree with expected/result digest equality. Normalize result representations under the declared method before hashing; the server does not know SQL equivalence rules.
+An execution manifest includes `scope`, `root`, the actual `artifact` URI, artifact `digest`, method/command, reported outcome, observation time, cases, trigger count, provenance, limitations and shared dimensions. `file:///absolute/path/to/retained-capture.json` is valid. Do not substitute a GitHub source URL for different probe output. A URI locates the artifact; its digest binds the referenced bytes. Digests use `sha256:` plus 64 hexadecimal characters.
+
+Known provenance requires a recorded origin and valid artifact digest, not a golden output. Comparison fields `result_digest`, `expected_digest`, and `oracle_source` may be omitted or empty at capture time. They remain mandatory for comparison-based establishment; a reviewer cannot waive them. When both comparison digests are supplied for known provenance, the reported pass/fail must agree with their equality. An actual expected property or metamorphic relation can provide an oracle; never copy the result digest simply to manufacture a pass. Normalize actual and expected representations under the declared method before hashing.
+
+`observed_at` must be the actual RFC3339 observation timestamp, not a deadline. The server allows at most five minutes of future clock skew and identifies timestamp errors separately from a negative `trigger_count`. Assessments include `evidence_profile` describing referenced records, declared provenance, reported outcomes and comparison-field presence. These are recorded conditions, not confidence scores or proof that the server executed/fetched the artifact. Unknown provenance is no longer mislabeled as an unavailable artifact.
 
 Supporting pairs require different authenticated producers, distinct manifests, no shared declared observation ancestry, matching method/oracle, and at least one authorized validator. Both must cover every claimed case and report positive engagement. Counterexamples require a common in-scope failing case. Different identities and roots do not prove independence; the review still checks methodology and disclosures. Credentials identify who submitted the report, not whether the reported execution happened.
 

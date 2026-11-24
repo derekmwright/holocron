@@ -3,6 +3,7 @@ package platform
 import (
 	"encoding/hex"
 	"encoding/json"
+	"fmt"
 	"net/url"
 	"slices"
 	"strings"
@@ -23,17 +24,26 @@ func validateSources(sources []SourceReference) error {
 	if len(sources) > 16 {
 		return problem("invalid", "at most 16 source references allowed")
 	}
-	for _, s := range sources {
-		if err := required(s.URI, s.Revision, s.Fragment, s.Digest); err != nil {
-			return err
+	for index, s := range sources {
+		prefix := fmt.Sprintf("sources[%d].", index)
+		for _, field := range []struct{ name, value string }{{"uri", s.URI}, {"revision", s.Revision}, {"fragment", s.Fragment}, {"digest", s.Digest}} {
+			if strings.TrimSpace(field.value) == "" {
+				return problem("invalid", prefix+field.name+" must be non-empty")
+			}
 		}
 		u, err := url.Parse(s.URI)
-		if err != nil || u.Scheme == "" || u.User != nil {
-			return problem("invalid", "source URI must identify an artifact without embedded credentials")
+		if err != nil {
+			return problem("invalid", prefix+"uri is malformed; supply an absolute artifact URI with a scheme")
+		}
+		if u.Scheme == "" {
+			return problem("invalid", prefix+"uri requires a scheme, such as https://host/repo/blob/REV/path or file:///absolute/path; a repository-relative path is not a URI")
+		}
+		if u.User != nil {
+			return problem("invalid", prefix+"uri must not contain embedded credentials")
 		}
 		decoded, err := hex.DecodeString(strings.TrimPrefix(s.Digest, "sha256:"))
 		if err != nil || len(decoded) != 32 || !strings.HasPrefix(s.Digest, "sha256:") {
-			return problem("invalid", "source reference requires a sha256 artifact digest")
+			return problem("invalid", prefix+"digest must be sha256: followed by exactly 64 hexadecimal characters")
 		}
 	}
 	return nil
@@ -66,10 +76,13 @@ func (c ClaimInput) validateApplicability() error {
 	}
 	a := c.Applicability
 	if a.Version != 2 {
-		return problem("invalid", "unsupported applicability version")
+		return problem("invalid", "applicability.version must be 2")
+	}
+	if err := choice("ApplicabilityEnvelope.state", a.State); err != nil {
+		return err
 	}
 	if !scopeEmpty(c.Scope) {
-		return problem("invalid", "use either legacy scope or a version 2 envelope, not both")
+		return problem("invalid", "scope and applicability are mutually exclusive; for a source-only hypothesis omit scope and use applicability {version:2,state:unknown,description:...}")
 	}
 	if a.State == "unknown" {
 		if len(a.Contexts) != 0 || c.Kind == "finite_cases" || strings.TrimSpace(a.Description) == "" {

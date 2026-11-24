@@ -18,6 +18,8 @@ The [first live-agent pilot](docs/live-pilot.md) records actual Codex/Claude ses
 
 The approved single-domain hierarchy extension is implemented: [capabilities, limits and migration](docs/hierarchy-release.md), [final ADRs](docs/hierarchy-decisions.md), and [practical Wadjet bootstrap](docs/wadjet-bootstrap.md). Multi-domain discovery remains disabled. The broader [design](docs/hierarchy-design.md) and [acceptance specification](docs/hierarchy-validation.md) also describe explicitly deferred capabilities.
 
+[The first Wadjet round](docs/wadjet-round-one-findings.md) documents the live workers' contract, evidence-capture and retrieval failures and the corresponding regression-tested corrections.
+
 Read in this order:
 
 1. [Research and architectural challenges](docs/research.md)

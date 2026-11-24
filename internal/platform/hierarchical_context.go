@@ -38,17 +38,20 @@ type contextCandidate struct {
 	lexical  float64
 }
 
-func (t *transaction) selectCards(ctx context.Context, v ContextInput, g *graph, h *hierarchy) ([]Card, *ResolvedContext, error) {
+func (t *transaction) selectCards(ctx context.Context, v ContextInput, g *graph, h *hierarchy, diagnostics *RetrievalDiagnostics) ([]Card, *ResolvedContext, error) {
 	mode := v.Discovery
 	if mode == "" {
 		mode = "legacy"
 		if v.Working != nil || v.OrientationOnly {
 			mode = "hierarchical"
+		} else if v.Query != "" || v.Objective != "" || len(v.Claims) > 0 {
+			mode = "flat"
 		}
 	}
-	if !slices.Contains([]string{"legacy", "flat", "hierarchical"}, mode) {
-		return nil, nil, problem("invalid", "unknown discovery mode")
+	if err := choice("ContextInput.discovery", mode); err != nil {
+		return nil, nil, err
 	}
+	diagnostics.Discovery = mode
 	if len(v.Claims) > 32 {
 		return nil, nil, problem("invalid", "too many explicit claim references")
 	}
@@ -79,19 +82,28 @@ func (t *transaction) selectCards(ctx context.Context, v ContextInput, g *graph,
 	if v.OrientationOnly && query == "" && resolved == nil && len(v.Claims) == 0 {
 		return nil, nil, problem("invalid", "orientation requires a query or explicit context")
 	}
-	rows, err := t.Query(ctx, `SELECT id,ts_rank_cd(search,websearch_to_tsquery('english',$3)) FROM claims WHERE tenant=$1 AND domain=$2`, t.p.Tenant, t.p.Domain, query)
+	rows, err := t.Query(ctx, `WITH q AS (
+ SELECT websearch_to_tsquery('english',$3) exact,
+ (SELECT string_agg(quote_literal(term),' | ')::tsquery FROM unnest(tsvector_to_array(to_tsvector('english',$3))) term) overlap
+) SELECT id,ts_rank_cd(search,q.exact,2),coalesce(ts_rank_cd(search,q.overlap,2),0)
+ FROM claims,q WHERE tenant=$1 AND domain=$2`, t.p.Tenant, t.p.Domain, query)
 	if err != nil {
 		return nil, nil, err
 	}
 	ranks := map[string]float64{}
+	exactMatches := map[string]bool{}
 	for rows.Next() {
 		var id string
-		var rank float64
-		if err = rows.Scan(&id, &rank); err != nil {
+		var exact, overlap float64
+		if err = rows.Scan(&id, &exact, &overlap); err != nil {
 			rows.Close()
 			return nil, nil, err
 		}
-		ranks[id] = rank
+		exactMatches[id] = exact > 0
+		ranks[id] = exact
+		if mode != "legacy" {
+			ranks[id] += overlap
+		}
 	}
 	err = rows.Err()
 	rows.Close()
@@ -143,13 +155,22 @@ func (t *transaction) selectCards(ctx context.Context, v ContextInput, g *graph,
 			relevant = explicit || lexical || directPlacement || directConcept || (resolved == nil && query == "" && matched)
 		}
 		if !relevant {
+			if mode == "legacy" && !matched {
+				diagnostics.ScopeExcluded++
+			} else {
+				diagnostics.RelevanceExcluded++
+			}
 			continue
 		}
 		if explicit {
 			reasons["explicit claim reference"] = true
 		}
 		if lexical {
-			reasons["task text match"] = true
+			if exactMatches[id] {
+				reasons["task text match"] = true
+			} else {
+				reasons["partial task text match (not all query terms)"] = true
+			}
 		}
 		if matched {
 			reasons["explicit finite applicability match"] = true
@@ -196,5 +217,6 @@ func (t *transaction) selectCards(ctx context.Context, v ContextInput, g *graph,
 	for _, c := range candidates {
 		result = append(result, c.card)
 	}
+	diagnostics.Candidates = len(result)
 	return result, resolved, nil
 }

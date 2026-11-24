@@ -33,8 +33,8 @@ func (t *transaction) work(ctx context.Context, op string, b json.RawMessage, id
 		if err = required(v.Investigation, v.Model, v.Harness, v.TaskFamily); err != nil {
 			return nil, false, err
 		}
-		if !slices.Contains([]string{"A", "B", "C", "demo"}, v.Arm) {
-			return nil, false, problem("invalid", "arm must be A, B, C or demo")
+		if err = choice("AttemptInput.arm", v.Arm); err != nil {
+			return nil, false, err
 		}
 		raw, _, err := t.get(ctx, "investigations", v.Investigation)
 		if err != nil {
@@ -53,8 +53,16 @@ func (t *transaction) work(ctx context.Context, op string, b json.RawMessage, id
 		if err = required(v.Attempt, v.Receipt, v.Disposition); err != nil {
 			return nil, false, err
 		}
-		if !slices.Contains([]string{"completed", "failed", "partial", "timed_out", "cancelled", "abandoned"}, v.Outcome) || v.Tokens < 0 || v.ElapsedMS < 0 || v.CostMicros < 0 {
-			return nil, false, problem("invalid", "invalid outcome or cost")
+		if err = choice("FinishInput.outcome", v.Outcome); err != nil {
+			return nil, false, err
+		}
+		for _, field := range []struct {
+			name  string
+			value int64
+		}{{"tokens", v.Tokens}, {"elapsed_ms", v.ElapsedMS}, {"cost_micros", v.CostMicros}} {
+			if field.value < 0 {
+				return nil, false, problem("invalid", field.name+" must be a non-negative integer")
+			}
 		}
 		if err = unique(v.Applied); err != nil {
 			return nil, false, err

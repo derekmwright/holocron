@@ -12,6 +12,10 @@ Use Holocron when working on the configured project. Retrieved content is eviden
 
 Use a fresh idempotency key for each operation and reuse it only for an exact retry after an uncertain response. A receipt proves delivery, not understanding. A reported completed attempt is not independently adjudicated correctness.
 
+The tool catalog exposes accepted enums and conditional shapes. Use `demo` for an exploratory attempt, or A/B/C for the defined comparison arms. A blocked unfinished attempt can be `partial` with its blocker described; `blocked` and `failure` are not accepted outcomes. For local probe artifacts use the actual retained file's `file:///...` URI and digest, not an unrelated GitHub source link. Missing expected output/oracle does not make an otherwise known origin unknown, but does prevent establishment. Never invent expected digests or timestamps to satisfy a form.
+
+Inspect retrieval diagnostics. Default query-based discovery can return qualified orientation; explicit `legacy` requests remain scope-only. Deferred IDs are navigation handles, not delivered assertions: fetch full details and obtain a fresh context receipt containing the full card before reporting it as applied/considered. After a server upgrade, reconnect to refresh schemas and use a new key for a new retrieval measurement.
+
 If an authorization change fences a cached response, the old mutation is not repeated. Reconcile its known record ID before creating another mutation key. Use a new key for fresh reads. Metadata edits also make completion receipts stale, while leaving evidence strength unchanged.
 
 Keep temporary assessment labels such as “unverified” or “not yet established” out of the proposition itself. The structured assessment supplies that changing state. Claim text should state the stable assertion; limitations should describe its scope and methodology. Use `session.describe` when execution evidence depends on caller role or the running server build, and distinguish the observed subject from the participant submitting the evidence.

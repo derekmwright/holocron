@@ -123,3 +123,21 @@ Alternatives rejected: universal scope predicates, automatic ontology induction,
 Consequences: ADRs 011–014 and 017 are implemented in a bounded form. ADR 016's single-domain replay/revocation safeguards are implemented; federated discovery, partial grants and declassification remain deferred. ADR 015's normative policy lifecycle is not implemented. Organization-level text never becomes an authoritative instruction through placement. Existing IDs, source bodies and historical assessments survive migration.
 
 Validation: tests cover classification neutrality, positive coverage, lateral orientation, dependency alternatives, cycles, moves, replay, hidden metadata, migration and restore. Real HTTP/MCP tests execute the metadata-only Wadjet bootstrap twice without duplicating nodes. The [release notes](hierarchy-release.md) map capabilities and limits to tests. Retrieval effectiveness remains a live-agent experiment.
+
+## ADR 019 Learnable contracts and qualified retrieval after the first Wadjet round
+
+Status: implementation correction based on live-agent findings, 2026-11-24.
+
+Context: agents needed source-code access to recover from undocumented enums, scope/envelope conflicts and misleading errors. The reported natural-language query excluded source-only ADRs through an implicit legacy filter, matched none through conjunctive lexical search, and could starve complete orientation cards under the default cap. Known origin was also incorrectly coupled to having a golden comparison output.
+
+Decision: advertise static constraints and conditional forms through the actual MCP input schemas, with a shared categorical vocabulary and field-specific errors. Preserve accepted outcomes and fixed verification obligations rather than normalizing invalid states. Source-only claims use explicit unknown applicability and pinned references.
+
+Natural-language query defaults now use authorized flat discovery without requiring organizational IDs. Working/orientation requests remain hierarchical; explicit legacy remains scope-only. Rank all-term and normalized term-overlap matches, labeling partial matches. Adaptive packing reserves a complete relevant orientation card before matched summaries consume the bundle, and uses navigation-only deferred handles rather than stripping qualifications. An explicit orientation percentage remains a hard cap. Diagnostics describe filtering and omission separately.
+
+Known provenance at intake requires a traceable artifact identity, not an expected result. Optional comparison fields remain mandatory for comparison-based establishment and independent reproduction is unchanged. Assessment profiles expose recorded outcomes and missing conditions without adding a confidence score. Old records are not automatically relabeled or rewritten.
+
+Alternatives rejected: silently increasing the caller's budget; treating unknown applicability as local truth; accepting arbitrary outcome synonyms; assigning an expected digest from the observed digest; and promoting a single reported experiment through reviewer authority alone.
+
+Consequences: query defaults and default budget allocation change, while explicit legacy/cap controls and mutation idempotency remain. Raw bundle bytes remain bounded, but additional detail calls and broader lexical recall must be measured. Saved responses still replay historical bytes: fresh keys and refreshed client schemas are required for new measurements. Capture admission becomes more expressive without weakening establishment.
+
+Evidence: the same reported request on a private, frozen claim/work snapshot returns both the disarmed-reference rule and matched summary within 6,000 bytes. The [round-one report](wadjet-round-one-findings.md) records the causal diagnosis, regression result and remaining limits. No general productivity improvement is inferred.

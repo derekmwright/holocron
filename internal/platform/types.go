@@ -47,10 +47,13 @@ func (s Scope) validate() error {
 	if raw, err := hex.DecodeString(s.Commit); err != nil || (len(raw) != 20 && len(raw) != 32) {
 		return problem("invalid", "commit must be a full immutable Git object ID")
 	}
-	if len(s.Cases) == 0 || len(s.Cases) > 100 {
-		return problem("invalid", "scope requires 1–100 named finite cases")
+	if len(s.Cases) < ScopeCasesMin || len(s.Cases) > ScopeCasesMax {
+		return problem("invalid", "scope.cases requires 1–100 named finite cases; for source-only hypotheses omit scope and use applicability {version:2,state:unknown,description:...}")
 	}
-	return unique(s.Cases)
+	if err := unique(s.Cases); err != nil {
+		return problem("invalid", "scope.cases must contain unique, non-empty case identifiers")
+	}
+	return nil
 }
 func (s Scope) sameEnvironment(t Scope) bool {
 	return s.Repository == t.Repository && s.Commit == t.Commit && s.Environment == t.Environment && s.Configuration == t.Configuration && s.Dataset == t.Dataset && s.Oracle == t.Oracle
@@ -226,16 +229,29 @@ type ChallengeExplanation struct {
 	Evidence []string `json:"evidence"`
 }
 type Assessment struct {
-	Claim          string                 `json:"claim"`
-	Policy         string                 `json:"policy"`
-	Epoch          int64                  `json:"epoch"`
-	Posture        string                 `json:"posture"`
-	Health         string                 `json:"health"`
-	Lifecycle      string                 `json:"lifecycle"`
-	Pending        bool                   `json:"pending_challenge"`
-	Justifications []Explanation          `json:"justifications"`
-	Challenges     []ChallengeExplanation `json:"challenges"`
-	Reasons        []string               `json:"reasons"`
+	Claim           string                 `json:"claim"`
+	Policy          string                 `json:"policy"`
+	Epoch           int64                  `json:"epoch"`
+	Posture         string                 `json:"posture"`
+	Health          string                 `json:"health"`
+	Lifecycle       string                 `json:"lifecycle"`
+	Pending         bool                   `json:"pending_challenge"`
+	Justifications  []Explanation          `json:"justifications"`
+	Challenges      []ChallengeExplanation `json:"challenges"`
+	Reasons         []string               `json:"reasons"`
+	EvidenceProfile []EvidenceCondition    `json:"evidence_profile,omitempty"`
+}
+
+type EvidenceCondition struct {
+	ID                     string `json:"id"`
+	Author                 string `json:"author"`
+	Provenance             string `json:"declared_provenance"`
+	ReportedOutcome        string `json:"reported_outcome"`
+	Lifecycle              string `json:"lifecycle"`
+	ManifestDigestRecorded bool   `json:"manifest_digest_recorded"`
+	ResultDigestRecorded   bool   `json:"result_digest_recorded"`
+	ExpectedDigestRecorded bool   `json:"expected_digest_recorded"`
+	OracleRecorded         bool   `json:"oracle_recorded"`
 }
 type EvidenceSummary struct {
 	ID          string   `json:"id"`
@@ -268,18 +284,42 @@ type Card struct {
 	Evidence           []EvidenceSummary      `json:"evidence"`
 }
 type Bundle struct {
-	Receipt        string            `json:"receipt"`
-	Epoch          int64             `json:"epoch"`
-	MetadataEpoch  int64             `json:"metadata_epoch"`
-	SnapshotAt     time.Time         `json:"snapshot_at"`
-	Resolved       *ResolvedContext  `json:"resolved,omitempty"`
-	Trust          string            `json:"trust"`
-	Policy         string            `json:"policy"`
-	Cards          []Card            `json:"cards"`
-	Investigations []json.RawMessage `json:"investigations"`
-	PriorOutcomes  []json.RawMessage `json:"prior_outcomes"`
-	Truncated      bool              `json:"truncated"`
-	Bytes          int               `json:"bytes"`
+	Receipt        string               `json:"receipt"`
+	Epoch          int64                `json:"epoch"`
+	MetadataEpoch  int64                `json:"metadata_epoch"`
+	SnapshotAt     time.Time            `json:"snapshot_at"`
+	Resolved       *ResolvedContext     `json:"resolved,omitempty"`
+	Trust          string               `json:"trust"`
+	Policy         string               `json:"policy"`
+	Cards          []Card               `json:"cards"`
+	Investigations []json.RawMessage    `json:"investigations"`
+	PriorOutcomes  []json.RawMessage    `json:"prior_outcomes"`
+	Truncated      bool                 `json:"truncated"`
+	Bytes          int                  `json:"bytes"`
+	Diagnostics    RetrievalDiagnostics `json:"diagnostics"`
+	Deferred       []DeferredClaim      `json:"deferred,omitempty"`
+}
+
+// Counts include only records visible in the authenticated compartment.
+type RetrievalDiagnostics struct {
+	Discovery          string `json:"discovery"`
+	Candidates         int    `json:"candidates"`
+	ScopeExcluded      int    `json:"scope_excluded,omitempty"`
+	RelevanceExcluded  int    `json:"relevance_excluded,omitempty"`
+	BudgetOmitted      int    `json:"budget_omitted,omitempty"`
+	OrientationOmitted int    `json:"orientation_omitted,omitempty"`
+	WorkOmitted        int    `json:"work_omitted,omitempty"`
+}
+
+// Navigation only: deliberately contains no shortened assertion or stripped
+// qualification. Deferred IDs are not delivered/applied claims in a receipt.
+type DeferredClaim struct {
+	ID             string `json:"id"`
+	Applicability  string `json:"local_applicability"`
+	Posture        string `json:"posture"`
+	Reason         string `json:"reason"`
+	Fetch          string `json:"fetch"`
+	RequiresDetail bool   `json:"requires_detail"`
 }
 
 func encode(v any) json.RawMessage {

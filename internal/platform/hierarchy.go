@@ -292,8 +292,11 @@ func validNode(v NodeInput) error {
 	if err := required(v.Category, v.Kind, v.Name); err != nil {
 		return err
 	}
-	if !slices.Contains([]string{"organization", "concept"}, v.Category) || len(v.Kind) > 64 || len(v.Name) > 256 || len(v.Description) > 8192 {
-		return problem("invalid", "invalid node category or size")
+	if err := choice("NodeInput.category", v.Category); err != nil {
+		return err
+	}
+	if len(v.Kind) > 64 || len(v.Name) > 256 || len(v.Description) > 8192 {
+		return problem("invalid", "node kind/name/description must not exceed 64/256/8192 UTF-8 bytes respectively")
 	}
 	if v.Category == "concept" && v.Repository != "" {
 		return problem("invalid", "repository identity belongs to an organizational resource")
@@ -304,8 +307,8 @@ func (t *transaction) validateAssociation(ctx context.Context, h *hierarchy, v *
 	if err := required(v.Kind, v.Target, v.Reason); err != nil {
 		return err
 	}
-	if !slices.Contains([]string{"placement", "claim_concept", "entity_concept"}, v.Kind) {
-		return problem("invalid", "unknown association kind")
+	if err := choice("AssociationInput.kind", v.Kind); err != nil {
+		return err
 	}
 	if v.Kind == "entity_concept" {
 		if v.Claim != "" || v.Steward != "" {
@@ -344,8 +347,8 @@ func (t *transaction) reviewAssociation(ctx context.Context, h *hierarchy, v Ass
 	if err := required(v.ID, v.Reason); err != nil {
 		return err
 	}
-	if v.Verdict != "accepted" && v.Verdict != "rejected" {
-		return problem("invalid", "association disposition must be accepted or rejected")
+	if err := choice("AssociationReviewInput.verdict", v.Verdict); err != nil {
+		return err
 	}
 	a, ok := h.Associations[v.ID]
 	if !ok {
@@ -437,8 +440,11 @@ func (t *transaction) hierarchyCommand(ctx context.Context, op string, b json.Ra
 		if v.Relation == "broader" || v.Relation == "related" {
 			category = "concept"
 		}
-		if !slices.Contains([]string{"contains", "broader", "related", "affiliated"}, v.Relation) || v.From == v.To {
-			return nil, false, problem("invalid", "invalid edge relation or self-edge")
+		if err = choice("EdgeInput.relation", v.Relation); err != nil {
+			return nil, false, err
+		}
+		if v.From == v.To {
+			return nil, false, problem("invalid", "from and to must identify different nodes")
 		}
 		if err = h.node(v.From, category); err != nil {
 			return nil, false, err

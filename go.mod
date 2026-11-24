@@ -3,6 +3,7 @@ module github.com/derekmwright/holocron
 go 1.25.0
 
 require (
+	github.com/google/jsonschema-go v0.4.3
 	github.com/jackc/pgx/v5 v5.7.5
 	go.opentelemetry.io/otel v1.39.0
 	go.opentelemetry.io/otel/metric v1.39.0
@@ -11,7 +12,6 @@ require (
 )
 
 require (
-	github.com/google/jsonschema-go v0.4.3 // indirect
 	github.com/google/uuid v1.6.0 // indirect
 	github.com/segmentio/asm v1.1.3 // indirect
 	github.com/segmentio/encoding v0.5.4 // indirect
