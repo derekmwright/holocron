@@ -12,7 +12,7 @@ func packContextCards(b *Bundle, cards []Card, v ContextInput, orientationPercen
 		}
 		orientation := card.LocalApplicability.State != "matched"
 		size := len(encode(card))
-		if orientation && orientationBytes+size > v.ByteBudget*orientationPercent/100 {
+		if orientation && v.OrientationPercent != nil && orientationBytes+size > v.ByteBudget*orientationPercent/100 {
 			reasons[card.ID] = "orientation_limit"
 			return false
 		}

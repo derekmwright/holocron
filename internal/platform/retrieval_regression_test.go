@@ -11,6 +11,18 @@ import (
 
 const naturalGateQuery = "forced-drain aggregate gate: what it proves, reference taken disarmed, duplicate output rows"
 
+func TestPackingDoesNotInventAnOrientationCap(t *testing.T) {
+	bundle := Bundle{Cards: []Card{}, Diagnostics: RetrievalDiagnostics{Discovery: "flat", Candidates: 1}}
+	card := Card{ID: "large-unmatched", Statement: strings.Repeat("x", 6500), Limitations: "Unvalidated guidance", LocalApplicability: LocalApplicability{State: "unknown"}}
+	packContextCards(&bundle, []Card{card}, ContextInput{ByteBudget: 6000}, 100)
+	if bundle.Diagnostics.BudgetOmitted != 1 || bundle.Diagnostics.OrientationOmitted != 0 {
+		t.Fatal("total byte limit misreported as an unrequested orientation cap", bundle.Diagnostics)
+	}
+	if len(bundle.Cards) != 0 || len(bundle.Deferred) != 1 || !bundle.Deferred[0].RequiresDetail {
+		t.Fatal("oversized assertion was stripped or lost")
+	}
+}
+
 func TestNaturalQueryFindsQualifiedADRAt6000Bytes(t *testing.T) {
 	s := fixture(t)
 	rule := invoke(t, s, "worker-a", "claim.publish", ClaimInput{Statement: "Condition-triggered defects use test-only forcing knobs, with the reference taken DISARMED. A forcing knob drains a chosen batch. Arming both comparison sides can hide the defect.", Kind: "hypothesis", Limitations: "Documented guidance only; not independently reproduced", Applicability: &ApplicabilityEnvelope{Version: 2, State: "unknown", Description: "Applicability to the current execution is unvalidated"}, Sources: []SourceReference{{URI: "https://example.invalid/repository/blob/pinned/docs/spill-gates.md", Revision: "pinned-source", Fragment: "Disarmed reference rule", Digest: "sha256:" + Digest("source fixture")}}})["id"].(string)
