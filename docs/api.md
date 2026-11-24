@@ -1,0 +1,63 @@
+# Prototype API
+
+The service exposes authenticated `POST /v1/{operation}` and MCP Streamable HTTP at `/mcp`. `GET /healthz` reports process liveness only. Both transports call the same application service. Responses are non-cacheable; requests from foreign browser origins are rejected.
+
+REST requires `Authorization: Bearer <token>`, `Idempotency-Key: <unique-key>`, and a JSON object body. MCP uses the same bearer credential and arguments shaped as `{"key":"unique-key","arguments":{...}}`. MCP tool schemas describe every field. Do not put a token in arguments. The service resolves tenant, domain, principal, and role from the credential.
+
+| Operation | Input and behavior |
+| --- | --- |
+| `claim.publish` | Statement, exact scope, kind (`finite_cases`, `hypothesis`, `generalization`), limitations; optional assumptions, concept labels, review deadline and previous revision. Returns immutable revision ID. |
+| `evidence.submit` | Execution/artifact manifest with declared roots and optional `derived_from` evidence IDs. Unknown provenance is retained but cannot qualify. |
+| `evidence.get` | ID; returns full manifest, attribution, and lifecycle. |
+| `justification.propose` | Claim ID, evidence IDs, premise claim IDs, warrant, limitations. Evidence within a justification is jointly required; justifications are alternatives. |
+| `challenge.submit` | Claim, kind (`counterexample` or `methodology`), reason, optional evidence; methodology requires a justification belonging to the claim. |
+| `review.record` | Reviewer-only target kind, target ID, accepted/rejected/inconclusive verdict, reason, coverage and provenance checks. Self-review is denied. Accepted counterexamples require reproduced evidence. |
+| `record.retract` | Claim/evidence kind, target ID, reason. Author or reviewer; preserves history. This is not privacy deletion. |
+| `assessment.explain` | Claim ID; current policy posture, lifecycle, dependency health, reasons, pending challenges and justification paths. |
+| `assessment.history` | Claim ID; latest 100 stored assessments in descending graph epoch. Current time/credential eligibility can differ from history. |
+| `claim.get` | Claim ID; full qualified card including evidence references. |
+| `context.get` | Exact scope, optional query/objective, byte budget (512–262144); whole qualified cards, relevant work, prior outcomes, truncation flag and receipt. |
+| `investigation.open` | Objective, question, scope, completion criteria, per-attempt token budget, deadline, support/pending-challenge requirements. Contract is immutable. |
+| `attempt.start` | Investigation ID, model, harness, arm (`A`, `B`, `C`, `demo`), task family. Records an attempt; no leases or worker control. |
+| `attempt.finish` | Attempt, receipt, outcome, disposition, applied IDs, findings, negative results, questions, tokens, elapsed milliseconds, cost in millionths of the chosen currency. Empty findings are valid. |
+| `work.list` | Empty object; up to 1000 contracts, attempts, and outcomes in the current domain. |
+| `experiment.export` | Reviewer-only work export. Costs and completion are agent-reported; external adjudication is necessary. |
+| `events.poll` | Reviewer-only consumer name; up to 100 unacknowledged metadata-only events. Repeat polls redeliver until acknowledged. |
+| `events.ack` | Consumer and event ID; idempotent acknowledgement after durable consumer handling. |
+
+Unknown fields are rejected. Arguments are limited to 256 KiB. Retries return the original response byte-for-byte, even if its graph epoch is now historical. Use a new key to request fresh context. A reused key with different arguments returns conflict.
+
+REST errors: 400 invalid arguments, 401 missing/expired credential, 403 insufficient authority, 404 inaccessible or missing record, 409 revision/receipt/idempotency conflict, 422 graph bound, 500 internal failure with details suppressed. MCP returns tool errors for the same application failures. Direct access and cross-tenant requests do not reveal which protected object exists.
+
+## Example claim
+
+```json
+{
+  "statement": "The two named fixture cases match the pinned oracle under forced spill",
+  "kind": "finite_cases",
+  "scope": {
+    "repository": "wadjet-fixture",
+    "commit": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+    "environment": "linux-fixture-v1",
+    "configuration": "forced-spill-v1",
+    "dataset": "fixture-v1",
+    "oracle": "oracle-v1",
+    "cases": ["group-null", "group-decimal"]
+  },
+  "limitations": "Only these fixtures; no universal SQL correctness claim"
+}
+```
+
+## Evidence manifest obligations
+
+An execution manifest includes `scope`, `root`, `artifact` URI, manifest `digest`, `result_digest`, `expected_digest`, `method`, `command`, `oracle_source`, `outcome`, `observed_at`, `cases`, `trigger_count`, `provenance`, `limitations`, and disclosed `shared` dimensions. Digests use `sha256:` followed by 64 hexadecimal characters. The artifact digest identifies the execution manifest, not merely identical stdout. Pass/fail classification must agree with expected/result digest equality. Normalize result representations under the declared method before hashing; the server does not know SQL equivalence rules.
+
+Supporting pairs require different authenticated producers, distinct manifests, no shared declared observation ancestry, matching method/oracle, and at least one authorized validator. Both must cover every claimed case and report positive engagement. Counterexamples require a common in-scope failing case. Different identities and roots do not prove independence; the review still checks methodology and disclosures. Credentials identify who submitted the report, not whether the reported execution happened.
+
+Artifacts are never fetched or executed by the server. Put sensitive artifacts in customer-controlled stores. Unknown provenance, infrastructure failure, timeout, or bounded search exhaustion is retained without becoming correctness support.
+
+## Read and write consistency
+
+All service operations take the visibility-domain row lock. Relevant mutations increment its epoch, validate the acyclic graph, and write assessment history plus an outbox event in the same transaction. The default bounds are 1000 claims and 10000 core graph records per domain. Over-bound mutations roll back, including their epoch update. This intentionally simple prototype favors consistent explanations over throughput.
+
+Context and completion recalculate eligibility against current review deadlines and participant revocations. A completion requires a current receipt owned by the attempt author, scope coverage, unexceeded contract budget/deadline, and the requested applied-knowledge gates. Failed, partial, timed-out, cancelled, and abandoned outcomes remain reportable after expiry. None of these reports automatically marks an investigation independently verified.

@@ -1,0 +1,8 @@
+/holocron
+/coverage.out
+/.env
+/artifacts/
+__pycache__/
+/.aws/
+/.codex/
+/.agents/

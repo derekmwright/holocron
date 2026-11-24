@@ -1,0 +1,4 @@
+# Merge this section into the intended Codex profile; do not overwrite your config.
+[mcp_servers.holocron]
+url = "http://127.0.0.1:8080/mcp"
+bearer_token_env_var = "HOLOCRON_TOKEN"
